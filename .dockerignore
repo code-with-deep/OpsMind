@@ -1,0 +1,16 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+*.md
+!README.md
+apps/web
+evals
+docs
+.cursor
+postgres_data

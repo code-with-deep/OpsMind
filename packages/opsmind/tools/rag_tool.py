@@ -120,7 +120,7 @@ def run_rag_tool(
     owner_session: Session,
     investigation_id: uuid.UUID | None = None,
     top_k: int = 5,
-    min_score: float = 0.05,
+    min_score: float = 0.01,
     registry: SourceIdRegistry | None = None,
     persist: bool = True,
 ) -> RagToolResult:

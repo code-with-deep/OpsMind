@@ -9,7 +9,8 @@ __pycache__
 .env
 *.md
 !README.md
-apps/web
+apps/web/node_modules
+apps/web/dist
 evals
 docs
 .cursor

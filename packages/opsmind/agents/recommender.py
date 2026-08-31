@@ -30,6 +30,15 @@ def _heuristic_recommendation(
     if not source_ids:
         source_ids = sorted(valid)
 
+    sql_sources = [s for s in source_ids if s.startswith("sql_")]
+    rag_sources = [s for s in source_ids if s.startswith("rag_")]
+    if not sql_sources:
+        sql_sources = [s for s in sorted(valid) if s.startswith("sql_")]
+    if not rag_sources:
+        rag_sources = [s for s in sorted(valid) if s.startswith("rag_")]
+
+    claim_sources = (sql_sources[:2] + rag_sources[:2]) if (sql_sources and rag_sources) else source_ids[:4]
+
     actions = [
         "Confirm problem-week vs prior-week revenue dip with finance stakeholders.",
         "If stockout confirmed on SKU-1001: escalate replenishment and pause featured ads.",
@@ -39,12 +48,12 @@ def _heuristic_recommendation(
     ]
     claim_map = []
     for d in drivers:
-        claim_map.append({"claim": d, "source_ids": source_ids[:3]})
+        claim_map.append({"claim": d, "source_ids": claim_sources})
     if not claim_map and source_ids:
         claim_map = [
             {
                 "claim": hypothesis.get("summary") or "Investigation completed with evidence.",
-                "source_ids": source_ids[:3],
+                "source_ids": claim_sources or source_ids[:3],
             }
         ]
 

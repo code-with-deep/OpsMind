@@ -38,5 +38,15 @@ services:
       db:
         condition: service_healthy
 
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: opsmind-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
 volumes:
   opsmind_pgdata:

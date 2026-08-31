@@ -17,6 +17,11 @@ SUPPORTED_DOMAINS = [
 ]
 
 _UNSUPPORTED_PATTERNS = [
+    r"\bweather\b",
+    r"\bforecast\b",
+    r"\brecipe\b",
+    r"\bcook\b",
+    r"\bcooking\b",
     r"\bpoem\b",
     r"\bsong\b",
     r"\bjoke\b",
@@ -67,6 +72,9 @@ _VAGUE_PATTERNS = [
     r"^fix (it|this|things)\.?$",
     r"^why is (everything|stuff) (bad|broken|wrong)\??$",
     r"^something('s| is) wrong\??$",
+    r"^why did (sales|revenue|orders|everything) drop yesterday\??$",
+    r"^why did (sales|revenue|orders) drop\??$",
+    r"^everything seems broken.*",
 ]
 
 

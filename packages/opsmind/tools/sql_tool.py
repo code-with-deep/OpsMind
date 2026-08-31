@@ -94,6 +94,22 @@ def get_readonly_session_factory(database_url_readonly: str) -> sessionmaker[Ses
     return _READONLY_SESSION
 
 
+def execute_sql_query_readonly(
+    template_key: str,
+    params: dict[str, Any],
+    database_url_readonly: str,
+) -> list[dict[str, Any]]:
+    """Execute allowlisted SQL template directly in read-only mode (without memory persistence)."""
+    template = get_template(template_key)
+    _assert_template_safe(template)
+    bind_params = _validate_params(template, params)
+    factory = get_readonly_session_factory(database_url_readonly)
+    with factory() as ro_session:
+        result = ro_session.execute(text(template.sql), bind_params)
+        return [_row_to_dict(row) for row in result.mappings().all()]
+
+
+
 def dispose_readonly_engine() -> None:
     global _READONLY_ENGINE, _READONLY_SESSION
     if _READONLY_ENGINE is not None:

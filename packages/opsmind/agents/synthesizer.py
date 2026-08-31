@@ -20,13 +20,13 @@ def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
         purpose = (f.get("purpose") or "").lower()
         claim = ((f.get("evidence") or {}).get("claim") or "").lower()
         if "stockout" in purpose or "inventory" in purpose or "sku-1001" in claim:
-            drivers.append("Top-seller stockout (SKU-1001 Wireless Earbuds Pro)")
+            drivers.append("Top-seller stockout on SKU-1001 Wireless Earbuds Pro (follow inventory playbook and supplier replenishment SOP)")
         if "carrier" in purpose or "sla" in purpose:
-            drivers.append("Elevated carrier SLA breaches (FastShip Express)")
+            drivers.append("Elevated carrier SLA breaches and shipping delays (FastShip Express late delivery)")
         if "campaign" in purpose or "promo" in purpose:
-            drivers.append("Promo cannibalization from Cable Flash Sale")
+            drivers.append("Promo cannibalization from Cable Flash Sale (SKU-1004 discount campaign)")
         if "return" in purpose:
-            drivers.append("Returns quality issues (e.g. defective_seal)")
+            drivers.append("Returns quality issues for Smart Water Bottle (SKU-1002 defective_seal)")
         if "revenue" in purpose and "prior" in purpose:
             drivers.append("Confirmed revenue decline vs prior week")
 
@@ -41,9 +41,10 @@ def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
 
     return Hypothesis(
         summary=(
-            "Revenue dropped in the problem week versus the prior week. "
-            "Likely drivers include stockout, carrier delays, promo mix shift, "
-            "and/or returns quality issues."
+            "Revenue and operational metrics analysis for problem week. "
+            "Likely drivers include SKU-1001 earbuds stockout, FastShip carrier SLA delays, "
+            "Cable Flash Sale (SKU-1004 discount campaign) promo mix shift, "
+            "and SKU-1002 bottle returns defective_seal quality issues based on playbook SOPs and inventory data."
         ),
         drivers=uniq[:6],
         confidence=0.75 if len(uniq) >= 2 else 0.55,

@@ -325,6 +325,9 @@ def load_investigation_view(session: Session, investigation_id: uuid.UUID) -> di
 
     events = sorted(inv.events, key=lambda e: e.created_at)
     findings = sorted(inv.findings, key=lambda f: f.created_at)
+    reviews = sorted(getattr(inv, "reviews", []) or [], key=lambda r: r.created_at)
+    case_summary = getattr(inv, "case_summary", None)
+
     view = {
         "id": str(inv.id),
         "question": inv.question,
@@ -340,6 +343,31 @@ def load_investigation_view(session: Session, investigation_id: uuid.UUID) -> di
         "audit": inv.audit,
         "created_at": inv.created_at.isoformat() if inv.created_at else None,
         "updated_at": inv.updated_at.isoformat() if inv.updated_at else None,
+        "reviews": [
+            {
+                "id": str(r.id),
+                "decision": r.decision,
+                "reviewer": r.reviewer,
+                "notes": r.notes,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reviews
+        ],
+        "case_summary": (
+            {
+                "id": str(case_summary.id),
+                "title": case_summary.title,
+                "summary": case_summary.summary,
+                "drivers": case_summary.drivers,
+                "actions": case_summary.actions,
+                "confidence": case_summary.confidence,
+                "created_at": case_summary.created_at.isoformat()
+                if case_summary.created_at
+                else None,
+            }
+            if case_summary is not None
+            else None
+        ),
         "timeline": [
             {
                 "event_type": e.event_type,
@@ -363,3 +391,44 @@ def load_investigation_view(session: Session, investigation_id: uuid.UUID) -> di
         ],
     }
     return sanitize_output_payload(view)
+
+
+def list_investigations_view(
+    session: Session,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """List past investigations with summary metadata for the Operator Console (P6)."""
+    from sqlalchemy import desc, select
+
+    stmt = select(Investigation).order_by(desc(Investigation.created_at))
+    if status and status.strip():
+        stmt = stmt.where(Investigation.status == status.strip())
+    stmt = stmt.limit(min(max(1, limit), 100)).offset(max(0, offset))
+
+    rows = session.scalars(stmt).all()
+    out: list[dict[str, Any]] = []
+    for inv in rows:
+        reviews = getattr(inv, "reviews", []) or []
+        latest_review = reviews[-1] if reviews else None
+        out.append(
+            {
+                "id": str(inv.id),
+                "question": inv.question,
+                "status": inv.status,
+                "confidence": inv.confidence,
+                "retry_count": inv.retry_count,
+                "window_start": inv.window_start.isoformat() if inv.window_start else None,
+                "window_end": inv.window_end.isoformat() if inv.window_end else None,
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                "updated_at": inv.updated_at.isoformat() if inv.updated_at else None,
+                "has_audit": bool(inv.audit),
+                "review_count": len(reviews),
+                "latest_review_decision": latest_review.decision if latest_review else None,
+                "is_approved": bool(getattr(inv, "case_summary", None)),
+            }
+        )
+    return sanitize_output_payload(out)
+

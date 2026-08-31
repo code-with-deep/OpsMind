@@ -14,8 +14,8 @@ class GuardrailResult:
 
 
 _JAILBREAK_PATTERNS = [
-    r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions",
-    r"disregard\s+(all\s+)?(previous|prior|above)\s+instructions",
+    r"ignore\s+(all\s+)?(previous|prior|above)?\s*(system\s+)?instructions",
+    r"disregard\s+(all\s+)?(previous|prior|above)?\s*(system\s+)?instructions",
     r"forget\s+(everything|all\s+previous)",
     r"you\s+are\s+now\s+(dan|unrestricted|jailbroken)",
     r"override\s+(your\s+)?(system|safety)\s+(prompt|policy)",
@@ -23,6 +23,8 @@ _JAILBREAK_PATTERNS = [
     r"developer\s+mode\s+enabled",
     r"jailbreak",
     r"do\s+anything\s+now",
+    r"(output|reveal|show|dump)\s+(the\s+)?(database\s+)?(passwords|credentials|keys)",
+    r"(admin|root)\s+credentials",
 ]
 
 _INJECTION_PATTERNS = [

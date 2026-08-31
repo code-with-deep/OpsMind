@@ -45,4 +45,6 @@ not necessarily inside this git repo.
 - **P3 LangGraph agent skeleton** — 6 agents, checkpoints, `POST/GET /investigations` (`docs/INVESTIGATIONS.md`)
 - **P4 Self-correction + grounding** — Critic retries, citation verifier, abstain statuses (`docs/SELF_CORRECTION.md`)
 - **P5 Security, guardrails, auth** — API key auth, input/output guardrails, RAG sanitize, tool budgets, audit (`docs/SECURITY.md`)
-- Next: **P6 Operator UI**
+- **P6 Operator UI + Case Memory** — React/Vite/Tailwind operator console, live DAG, timeline, evidence citations explorer, approve/reject reviews, episodic case memory (`apps/web`)
+- **P7 Evaluation harness** — 12 golden benchmark cases, multi-metric scoring engine, CLI runner & markdown scorecard generator (`docs/EVAL_BASELINE.md`)
+- **P8 Demo walkthrough & runbook** — End-to-end incident walkthroughs, failure modes, abstention, guardrails & evaluation guide (`docs/DEMO_SCRIPT.md`)

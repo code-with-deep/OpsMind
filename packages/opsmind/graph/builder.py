@@ -18,11 +18,11 @@ from opsmind.graph.state import InvestigationState
 
 def _route_after_planner(
     state: InvestigationState,
-) -> Literal["tools", "end"]:
+) -> Literal["data_investigator", "end"]:
     status = state.get("status") or ""
     if status in {"unsupported", "needs_clarification"}:
         return "end"
-    return "tools"
+    return "data_investigator"
 
 
 def _route_after_critic(
@@ -59,11 +59,9 @@ def build_investigation_graph():
     graph.add_conditional_edges(
         "planner",
         _route_after_planner,
-        {"tools": "fanout", "end": END},
+        {"data_investigator": "data_investigator", "end": END},
     )
-    graph.add_edge("fanout", "data_investigator")
-    graph.add_edge("fanout", "knowledge")
-    graph.add_edge("data_investigator", "synthesizer")
+    graph.add_edge("data_investigator", "knowledge")
     graph.add_edge("knowledge", "synthesizer")
     graph.add_edge("synthesizer", "critic")
     graph.add_conditional_edges(

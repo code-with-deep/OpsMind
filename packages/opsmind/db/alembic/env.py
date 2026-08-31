@@ -25,6 +25,15 @@ target_metadata = Base.metadata
 def get_url() -> str:
     url = os.getenv("DATABASE_URL_SYNC")
     if not url:
+        # Fall back to reading .env
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv()
+            url = os.getenv("DATABASE_URL_SYNC")
+        except Exception:
+            pass
+    if not url:
         raise RuntimeError(
             "DATABASE_URL_SYNC is not set. Provide it via environment or .env."
         )

@@ -49,6 +49,10 @@ class Investigation(Base):
         back_populates="investigation"
     )
     findings: Mapped[list[Finding]] = relationship(back_populates="investigation")
+    reviews: Mapped[list[Review]] = relationship(back_populates="investigation")
+    case_summary: Mapped[Optional[CaseSummary]] = relationship(
+        back_populates="investigation", uselist=False
+    )
 
 
 class InvestigationEvent(Base):
@@ -165,3 +169,63 @@ class DocumentChunk(Base):
     )
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+
+class Review(Base):
+    """Operator decision / review for an investigation (P6)."""
+
+    __tablename__ = "reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("investigations.id"), nullable=False, index=True
+    )
+    decision: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # "approved", "rejected", "comment"
+    reviewer: Mapped[str] = mapped_column(String(128), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    investigation: Mapped[Investigation] = relationship(back_populates="reviews")
+    case_summary: Mapped[Optional[CaseSummary]] = relationship(
+        back_populates="review", uselist=False
+    )
+
+
+class CaseSummary(Base):
+    """Case memory entry promoted upon operator approval (P6)."""
+
+    __tablename__ = "case_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("investigations.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    review_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("reviews.id"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    drivers: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    actions: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    investigation: Mapped[Investigation] = relationship(back_populates="case_summary")
+    review: Mapped[Optional[Review]] = relationship(back_populates="case_summary")
+

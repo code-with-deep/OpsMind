@@ -1,0 +1,50 @@
+# Secrets & local env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker / local data
+postgres_data/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node (operator UI later)
+node_modules/
+apps/web/dist/
+apps/web/build/
+
+# Misc
+*.pem
+.cursor/*.log

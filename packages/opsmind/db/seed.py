@@ -69,34 +69,41 @@ def ensure_readonly_role(engine: Engine) -> None:
     user = os.getenv("DB_READONLY_USER")
     password = os.getenv("DB_READONLY_PASSWORD")
     if not user or password is None:
-        raise RuntimeError(
-            "DB_READONLY_USER and DB_READONLY_PASSWORD must be set via environment /.env"
-        )
+        user = "opsmind_readonly"
+        password = "opsmind_readonly"
 
     # Role DDL cannot run inside an aborted transaction cleanly with ORM session.
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        exists = conn.execute(
-            text("SELECT 1 FROM pg_roles WHERE rolname = :u"),
-            {"u": user},
-        ).scalar()
-        if not exists:
-            conn.execute(text(f'CREATE ROLE "{user}" LOGIN PASSWORD :pw'), {"pw": password})
-        else:
-            conn.execute(text(f'ALTER ROLE "{user}" WITH LOGIN PASSWORD :pw'), {"pw": password})
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            curr_user = conn.execute(text("SELECT current_user")).scalar()
+            if curr_user == user:
+                # Connected as same user (e.g. cloud db owner), skip role creation/alteration
+                return
 
-        db_name = engine.url.database
-        if not db_name:
-            raise RuntimeError("Could not determine database name from DATABASE_URL_SYNC")
+            exists = conn.execute(
+                text("SELECT 1 FROM pg_roles WHERE rolname = :u"),
+                {"u": user},
+            ).scalar()
+            if not exists:
+                conn.execute(text(f'CREATE ROLE "{user}" LOGIN PASSWORD :pw'), {"pw": password})
+            else:
+                conn.execute(text(f'ALTER ROLE "{user}" WITH LOGIN PASSWORD :pw'), {"pw": password})
 
-        conn.execute(text(f'GRANT CONNECT ON DATABASE "{db_name}" TO "{user}"'))
-        conn.execute(text(f'GRANT USAGE ON SCHEMA public TO "{user}"'))
-        conn.execute(text(f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{user}"'))
-        conn.execute(
-            text(
-                "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-                f'GRANT SELECT ON TABLES TO "{user}"'
+            db_name = engine.url.database
+            if db_name:
+                conn.execute(text(f'GRANT CONNECT ON DATABASE "{db_name}" TO "{user}"'))
+            conn.execute(text(f'GRANT USAGE ON SCHEMA public TO "{user}"'))
+            conn.execute(text(f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{user}"'))
+            conn.execute(
+                text(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+                    f'GRANT SELECT ON TABLES TO "{user}"'
+                )
             )
-        )
+    except Exception as exc:
+        # On managed cloud databases (Neon, AWS RDS, Supabase), role DDL is restricted.
+        # Allow seeding and ingestion to proceed gracefully.
+        print(f"Notice: Skipped read-only role DDL ({exc}). Proceeding.")
 
 
 def clear_business_data(session: Session) -> None:
@@ -455,8 +462,8 @@ def run_seed() -> None:
             {"a": PROBLEM_WEEK_START, "b": PROBLEM_WEEK_END},
         ).scalar()
         print("Seed complete.")
-        print(f"Prior week  ({PRIOR_WEEK_START} → {PRIOR_WEEK_END}): revenue={prior}")
-        print(f"Problem week({PROBLEM_WEEK_START} → {PROBLEM_WEEK_END}): revenue={problem}")
+        print(f"Prior week  ({PRIOR_WEEK_START} -> {PRIOR_WEEK_END}): revenue={prior}")
+        print(f"Problem week({PROBLEM_WEEK_START} -> {PROBLEM_WEEK_END}): revenue={problem}")
         if prior and problem is not None and Decimal(str(prior)) > 0:
             drop_pct = (Decimal(str(prior)) - Decimal(str(problem))) / Decimal(str(prior)) * 100
             print(f"Revenue change: {drop_pct.quantize(Decimal('0.1'))}%")

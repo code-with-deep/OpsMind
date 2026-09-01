@@ -1,0 +1,33 @@
+# Development override — hot reload without rebuilding images on every save.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Faster alternative on Windows: keep only db + api in Docker, run web locally:
+#   docker compose up db api -d
+#   cd apps/web && npm install && npm run dev
+
+services:
+  api:
+    volumes:
+      - ./apps:/app/apps
+      - ./packages:/app/packages
+      - ./data:/app/data
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./alembic.ini:/app/alembic.ini
+      - ./README.md:/app/README.md
+    environment:
+      UVICORN_RELOAD: "1"
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    depends_on:
+      - api
+
+volumes:
+  web_node_modules:

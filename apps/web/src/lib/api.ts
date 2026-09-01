@@ -10,15 +10,25 @@ const STORAGE_KEY = "opsmind_api_key";
 const DEFAULT_DEV_KEY = "change-me-opsmind-dev-key";
 
 export function getApiBaseUrl(): string {
-  if (typeof window !== "undefined") {
-    const envUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-    if (envUrl) return envUrl.replace(/\/$/, "");
+  const configured = import.meta.env.VITE_API_BASE_URL;
+  if (typeof configured === "string" && configured.trim().length > 0) {
+    return configured.trim().replace(/\/$/, "");
+  }
 
-    // If on localhost (e.g. port 3000), FastAPI backend is typically on port 8000
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return `http://${window.location.hostname}:8000`;
+  // Vite dev server proxies API routes to the backend container.
+  if (import.meta.env.DEV) {
+    return "";
+  }
+
+  // Docker / local production build: web on :3000, API on :8000.
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `${protocol}//${hostname}:8000`;
     }
   }
+
+  // Deployed behind a single gateway — use same origin.
   return "";
 }
 

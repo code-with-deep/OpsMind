@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
+import { FilterPills } from "../common/AppUI";
 import {
   TrendingDown,
   Truck,
@@ -136,15 +137,15 @@ export function NewInvestigationModal({
       onClose={onClose}
       maxWidth="2xl"
       title={
-        <div className="flex items-center gap-2 sm:gap-2.5">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-brand-950 border border-brand-800 flex items-center justify-center text-brand-400 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-accent-950 border border-accent-800 flex items-center justify-center text-accent-400 shrink-0">
             <Zap className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-xs sm:text-base font-semibold text-surface-100 truncate">
+            <h2 className="font-app-heading text-base text-white truncate">
               Launch Operations Investigation
             </h2>
-            <p className="text-[10px] sm:text-[11px] text-surface-400 truncate">
+            <p className="text-xs text-surface-400 truncate">
               Run custom queries or select seeded incident scenarios
             </p>
           </div>
@@ -153,30 +154,28 @@ export function NewInvestigationModal({
     >
       <div className="space-y-4 sm:space-y-6">
         {/* Custom Query Input Form */}
-        <form onSubmit={handleSubmitCustom} className="space-y-2.5 sm:space-y-3">
-          <label className="text-[11px] sm:text-xs font-semibold text-surface-200 block">
+        <form onSubmit={handleSubmitCustom} className="space-y-3">
+          <label className="text-sm font-medium text-surface-200 block">
             Custom Operational Question
           </label>
-          <div className="relative">
-            <textarea
-              rows={3}
-              required
-              value={customQuestion}
-              onChange={(e) => setCustomQuestion(e.target.value)}
-              placeholder="e.g. Why did revenue drop in the problem week 2026-08-17 to 2026-08-23 compared to prior week?"
-              className="w-full p-3 sm:p-3.5 bg-surface-950 border border-surface-750 rounded-xl text-xs sm:text-sm text-surface-100 placeholder:text-surface-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 resize-none font-sans"
-            />
-          </div>
+          <textarea
+            rows={3}
+            required
+            value={customQuestion}
+            onChange={(e) => setCustomQuestion(e.target.value)}
+            placeholder="e.g. Why did revenue drop in the problem week 2026-08-17 to 2026-08-23 compared to prior week?"
+            className="w-full p-3.5 bg-surface-950 border border-surface-800 rounded-xl text-sm text-surface-100 placeholder:text-surface-500 focus:outline-none focus:border-accent-600 focus:ring-1 focus:ring-accent-600/50 resize-none"
+          />
           <div className="flex justify-end">
             <Button
               type="submit"
-              variant="brand"
+              variant="accent"
               size="sm"
               loading={loading}
               disabled={!customQuestion.trim()}
               icon={<ArrowRight className="w-4 h-4" />}
               iconPosition="right"
-              className="w-full sm:w-auto font-semibold"
+              className="w-full sm:w-auto"
             >
               Start Investigation
             </Button>
@@ -184,70 +183,44 @@ export function NewInvestigationModal({
         </form>
 
         {/* Preloaded Scenarios Section */}
-        <div className="space-y-2.5 sm:space-y-3 pt-3 border-t border-surface-800">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span className="text-[11px] sm:text-xs font-semibold text-surface-200">
+        <div className="space-y-3 pt-4 border-t border-surface-800/60">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="text-sm font-medium text-surface-200">
               Or Choose a Preloaded Scenario
             </span>
-
-            {/* Category tabs */}
-            <div className="flex items-center gap-1 bg-surface-950 p-0.5 rounded-lg border border-surface-800 overflow-x-auto shrink-0">
-              <button
-                type="button"
-                onClick={() => setFilterTab("all")}
-                className={`px-2 py-0.5 text-[10px] sm:text-[11px] rounded font-medium whitespace-nowrap shrink-0 ${
-                  filterTab === "all" ? "bg-surface-800 text-white" : "text-surface-400"
-                }`}
-              >
-                All
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterTab("planted")}
-                className={`px-2 py-0.5 text-[10px] sm:text-[11px] rounded font-medium whitespace-nowrap shrink-0 ${
-                  filterTab === "planted" ? "bg-surface-800 text-white" : "text-surface-400"
-                }`}
-              >
-                Planted Incidents
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterTab("safety")}
-                className={`px-2 py-0.5 text-[10px] sm:text-[11px] rounded font-medium whitespace-nowrap shrink-0 ${
-                  filterTab === "safety" ? "bg-surface-800 text-white" : "text-surface-400"
-                }`}
-              >
-                Safety & Triage
-              </button>
-            </div>
+            <FilterPills
+              options={[
+                { key: "all", label: "All" },
+                { key: "planted", label: "Planted Incidents" },
+                { key: "safety", label: "Safety & Triage" },
+              ]}
+              value={filterTab}
+              onChange={(v) => setFilterTab(v as typeof filterTab)}
+            />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-2.5 max-h-64 sm:max-h-72 overflow-y-auto pr-0.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-0.5">
             {filteredScenarios.map((scenario) => (
               <button
                 key={scenario.id}
                 type="button"
                 disabled={loading}
                 onClick={() => handleSelectScenario(scenario.question)}
-                className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between space-y-2 group cursor-pointer ${scenario.tone}`}
+                className={`app-card p-4 text-left transition-all flex flex-col justify-between gap-3 group cursor-pointer hover:border-accent-800/50 ${scenario.tone}`}
               >
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {scenario.icon}
-                      <span className="text-xs font-semibold text-surface-200 group-hover:text-white transition-colors truncate">
-                        {scenario.title}
-                      </span>
-                    </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {scenario.icon}
+                    <span className="text-sm font-medium text-surface-100 group-hover:text-accent-300 transition-colors">
+                      {scenario.title}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-surface-400 leading-snug break-words">
-                    {scenario.description}
-                  </p>
+                  <p className="text-xs text-surface-400 leading-relaxed">{scenario.description}</p>
                 </div>
 
-                <div className="pt-1.5 border-t border-surface-800/40 flex items-center justify-between text-[10px] text-brand-400 group-hover:text-brand-300 font-mono">
+                <div className="pt-2 border-t border-surface-800/40 flex items-center justify-between text-xs text-accent-400 group-hover:text-accent-300">
                   <span>Click to run</span>
-                  <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </button>
             ))}

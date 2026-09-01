@@ -49,7 +49,7 @@ export function Modal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 md:p-6 animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-2.5 md:p-6 animate-fade-in">
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-surface-950/80 backdrop-blur-sm transition-opacity"
@@ -60,7 +60,7 @@ export function Modal({
       {/* Modal Dialog */}
       <div
         className={cn(
-          "relative w-full bg-surface-900 border border-surface-800 rounded-2xl shadow-2xl z-10 overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[90vh] animate-slide-up",
+          "relative w-full bg-surface-900 border border-surface-800 rounded-t-2xl sm:rounded-2xl shadow-2xl z-10 overflow-hidden flex flex-col max-h-[92dvh] sm:max-h-[90vh] animate-slide-up",
           maxWidthStyles[maxWidth],
           className
         )}
@@ -88,7 +88,7 @@ export function Modal({
           </div>
         )}
 
-        <div className="p-4 sm:p-6 overflow-y-auto flex-1 overscroll-contain">{children}</div>
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom))]">{children}</div>
       </div>
     </div>
   );

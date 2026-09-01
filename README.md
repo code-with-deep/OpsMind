@@ -95,9 +95,32 @@ Copy-Item .env.example .env
 
 ### 2. Start the Stack with Docker Compose
 
+**Production-style (static build — rebuild required after code changes):**
+
 ```powershell
 docker compose up --build -d
 ```
+
+**Development with hot reload (recommended while coding):**
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+- **Web:** Vite HMR on [http://localhost:3000](http://localhost:3000) — save React/CSS files and the browser updates instantly.
+- **API:** Uvicorn `--reload` — save Python files under `apps/` or `packages/` and the API restarts automatically.
+- **DB:** unchanged (data persists in the `opsmind_pgdata` volume).
+
+**Fastest option on Windows (frontend outside Docker):**
+
+```powershell
+docker compose up db api -d
+cd apps/web
+npm install
+npm run dev
+```
+
+Only Postgres + API run in Docker; Vite runs natively on your machine (best file-watching performance).
 
 ---
 
@@ -133,7 +156,9 @@ curl -H "X-API-Key: change-me-opsmind-dev-key" http://localhost:8000/tools/sql/t
 
 ### 5. Launch the Operator Web Console (Frontend)
 
-Run the responsive Vite development server:
+If you used **`docker-compose.dev.yml`**, the web dev server is already running at [http://localhost:3000](http://localhost:3000) with hot reload.
+
+Otherwise, run the Vite dev server locally:
 
 ```powershell
 cd apps/web

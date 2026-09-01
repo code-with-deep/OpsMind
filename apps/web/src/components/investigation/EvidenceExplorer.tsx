@@ -7,10 +7,10 @@ import {
   Database,
   FileText,
   Layers,
-  Search,
 } from "lucide-react";
 import { Finding } from "../../types";
 import { Badge } from "../common/Badge";
+import { EmptyState, FilterPills, SearchBar, SectionCard } from "../common/AppUI";
 
 interface EvidenceExplorerProps {
   findings: Finding[];
@@ -60,88 +60,36 @@ export function EvidenceExplorer({
   };
 
   return (
-    <div className="bg-surface-900 border border-surface-800 rounded-2xl overflow-hidden flex flex-col shadow-sm">
-      {/* Header & Filter Controls */}
-      <div className="p-4 sm:p-5 border-b border-surface-800 space-y-3 shrink-0 bg-surface-900">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-sky-950 border border-sky-800 flex items-center justify-center text-sky-400 shrink-0">
-              <Layers className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="text-xs sm:text-base font-semibold text-surface-100 truncate">
-                Evidence Sources & Grounding Registry ({findings.length})
-              </h3>
-              <p className="text-[10px] sm:text-[11px] text-surface-400 truncate">
-                Immutable, cited tool artifacts produced by Data Investigator and Knowledge Agent
-              </p>
-            </div>
-          </div>
-          <Badge variant="purple" size="xs" className="self-start sm:self-center shrink-0">
-            Grounding Plane
-          </Badge>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
-          {/* Search bar */}
-          <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 text-surface-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Filter claims, SQL template keys, playbook titles..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 bg-surface-950 border border-surface-750 rounded-lg text-xs text-surface-200 placeholder:text-surface-500 focus:outline-none focus:border-brand-500"
-            />
-          </div>
-
-          {/* Type Filter Buttons */}
-          <div className="flex items-center bg-surface-950 p-1 rounded-lg border border-surface-800 shrink-0 overflow-x-auto">
-            <button
-              type="button"
-              onClick={() => setFilterType("all")}
-              className={`px-2.5 sm:px-3 py-1 text-xs rounded-md font-medium transition-all shrink-0 ${
-                filterType === "all"
-                  ? "bg-brand-600 text-white shadow-sm"
-                  : "text-surface-400 hover:text-surface-200"
-              }`}
-            >
-              All ({findings.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterType("sql")}
-              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 text-xs rounded-md font-medium transition-all shrink-0 ${
-                filterType === "sql"
-                  ? "bg-sky-600 text-white shadow-sm"
-                  : "text-surface-400 hover:text-surface-200"
-              }`}
-            >
-              <Database className="w-3 h-3" />
-              <span>SQL ({sqlCount})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterType("rag")}
-              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 text-xs rounded-md font-medium transition-all shrink-0 ${
-                filterType === "rag"
-                  ? "bg-purple-600 text-white shadow-sm"
-                  : "text-surface-400 hover:text-surface-200"
-              }`}
-            >
-              <FileText className="w-3 h-3" />
-              <span>Playbooks ({ragCount})</span>
-            </button>
-          </div>
-        </div>
+    <SectionCard
+      title="Evidence Explorer"
+      subtitle={`${findings.length} cited sources from SQL queries and SOP playbooks`}
+      icon={<Layers className="w-4 h-4" />}
+      noPadding
+    >
+      <div className="px-5 pt-4 pb-3 space-y-3 border-b border-surface-800/50">
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search claims, source IDs, or playbook titles..."
+        />
+        <FilterPills
+          value={filterType}
+          onChange={(k) => setFilterType(k as typeof filterType)}
+          options={[
+            { key: "all", label: "All", count: findings.length },
+            { key: "sql", label: "SQL", count: sqlCount },
+            { key: "rag", label: "Playbooks", count: ragCount },
+          ]}
+        />
       </div>
 
-      {/* Findings List & Cards */}
-      <div className="p-3.5 sm:p-5 space-y-3.5 sm:space-y-4 overflow-y-auto max-h-[700px]">
+      <div className="p-4 sm:p-5 space-y-3 app-scroll-panel">
         {filteredFindings.length === 0 ? (
-          <div className="text-center py-12 text-surface-500 text-xs">
-            No evidence findings match the selected filters.
-          </div>
+          <EmptyState
+            icon={<Layers className="w-8 h-8" />}
+            title="No evidence found"
+            description="Try adjusting your search or filter."
+          />
         ) : (
           filteredFindings.map((finding) => {
             const isSql = finding.source_id.startsWith("sql_");
@@ -154,57 +102,53 @@ export function EvidenceExplorer({
                 id={`source-${finding.source_id}`}
                 className={`rounded-xl border transition-all ${
                   isExpanded
-                    ? "bg-surface-950 border-brand-500/80 shadow-md ring-1 ring-brand-500/20"
-                    : "bg-surface-950/80 border-surface-800 hover:border-surface-700"
+                    ? "app-card border-accent-600/50 ring-1 ring-accent-500/20"
+                    : "app-card hover:border-surface-600"
                 }`}
               >
-                {/* Header item */}
-                <div
-                  className="p-3.5 sm:p-4 flex items-start justify-between gap-2.5 sm:gap-3 cursor-pointer select-none"
+                <button
+                  type="button"
+                  className="w-full p-4 flex items-start justify-between gap-3 text-left"
                   onClick={() => {
                     setExpandedSourceId(isExpanded ? null : finding.source_id);
                     onSelectSource?.(finding.source_id);
                   }}
                 >
-                  <div className="flex items-start gap-2.5 sm:gap-3 flex-1 min-w-0">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
                     <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                         isSql
-                          ? "bg-sky-950 border border-sky-800 text-sky-400"
-                          : "bg-purple-950 border border-purple-800 text-purple-400"
+                          ? "bg-sky-950/80 border border-sky-800/60 text-sky-400"
+                          : "bg-purple-950/80 border border-purple-800/60 text-purple-400"
                       }`}
                     >
                       {isSql ? <Database className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                     </div>
 
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                        <span className="font-mono text-xs font-semibold text-surface-100">
-                          {finding.source_id}
+                    <div className="space-y-1.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs text-accent-300">{finding.source_id}</span>
+                        <Badge variant={isSql ? "info" : "success"} size="xs">
+                          {isSql ? "SQL" : "RAG"}
+                        </Badge>
+                        <span className="text-[10px] text-surface-500">
+                          {Math.round(finding.confidence * 100)}% confidence
                         </span>
-                        <Badge variant={isSql ? "info" : "purple"} size="xs">
-                          {isSql ? "SQL Tool" : "Playbook RAG"}
-                        </Badge>
-                        <Badge variant="default" size="xs">
-                          {Math.round(finding.confidence * 100)}% Conf
-                        </Badge>
                       </div>
-
-                      <p className="text-xs sm:text-sm text-surface-200 font-medium leading-snug break-words">
-                        {finding.claim}
-                      </p>
+                      <p className="text-sm text-surface-100 leading-relaxed">{finding.claim}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-0.5 shrink-0">
                     <button
                       type="button"
                       onClick={(e) => handleCopy(finding.source_id, e)}
-                      className="p-1.5 rounded-md hover:bg-surface-800 text-surface-400 hover:text-surface-200 transition-colors"
-                      title="Copy Source ID"
+                      className="touch-target rounded-md hover:bg-surface-800 text-surface-400"
+                      title="Copy source ID"
+                      aria-label="Copy source ID"
                     >
                       {copiedId === finding.source_id ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <Check className="w-3.5 h-3.5 text-accent-400" />
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
@@ -215,90 +159,68 @@ export function EvidenceExplorer({
                       <ChevronRight className="w-4 h-4 text-surface-400" />
                     )}
                   </div>
-                </div>
+                </button>
 
-                {/* Expanded Details Body */}
                 {isExpanded && (
-                  <div className="px-3.5 pb-3.5 sm:px-4 sm:pb-4 pt-2 border-t border-surface-850 space-y-3 text-xs animate-fadeIn">
+                  <div className="px-4 pb-4 pt-1 border-t border-surface-800/50 space-y-3">
                     {finding.sources.map((source, sIdx) => (
-                      <div
-                        key={sIdx}
-                        className="p-3 sm:p-3.5 rounded-lg bg-surface-900 border border-surface-800 space-y-2.5"
-                      >
-                        {/* SQL Template Info */}
+                      <div key={sIdx} className="app-card p-4 space-y-3 text-sm">
                         {source.template_key && (
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] pb-2 border-b border-surface-800 gap-1">
-                            <span className="text-surface-400 truncate">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-surface-400 pb-2 border-b border-surface-800/50">
+                            <span>
                               Template:{" "}
-                              <code className="text-sky-300 font-mono font-semibold">
-                                {source.template_key}
-                              </code>
+                              <code className="text-sky-300 font-mono">{source.template_key}</code>
                             </span>
                             {source.row_count !== undefined && (
-                              <span className="text-surface-400 font-mono shrink-0">
-                                Rows: <strong className="text-surface-200">{source.row_count}</strong>
-                              </span>
+                              <span className="font-mono">{source.row_count} rows</span>
                             )}
                           </div>
                         )}
 
-                        {/* RAG Doc Info */}
                         {source.title && (
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] pb-2 border-b border-surface-800 gap-1">
-                            <span className="text-surface-300 font-semibold flex items-center gap-1.5 truncate">
-                              <FileText className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                              <span className="truncate">{source.title}</span>
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs pb-2 border-b border-surface-800/50">
+                            <span className="text-surface-200 font-medium flex items-center gap-1.5">
+                              <FileText className="w-3.5 h-3.5 text-purple-400" />
+                              {source.title}
                             </span>
                             {source.score !== undefined && (
-                              <span className="text-surface-400 font-mono shrink-0">
-                                Match:{" "}
-                                <strong className="text-purple-300">
-                                  {Math.round(source.score * 100)}%
-                                </strong>
+                              <span className="text-surface-400 font-mono">
+                                {Math.round(source.score * 100)}% match
                               </span>
                             )}
                           </div>
                         )}
 
-                        {/* Text Excerpt */}
                         {source.excerpt && (
-                          <div className="p-2.5 rounded bg-surface-950 border border-surface-850 font-sans text-surface-300 text-[11px] leading-relaxed break-words">
-                            {source.excerpt}
-                          </div>
+                          <p className="text-sm text-surface-300 leading-relaxed">{source.excerpt}</p>
                         )}
 
-                        {/* Formatted Rows Table if SQL sample_rows */}
                         {source.sample_rows && source.sample_rows.length > 0 && (
-                          <div className="space-y-1.5">
-                            <span className="text-[10px] uppercase font-mono tracking-wider text-surface-400 block font-semibold">
-                              Sample Query Rows ({source.sample_rows.length})
-                            </span>
-                            <div className="overflow-x-auto rounded border border-surface-800 bg-surface-950 max-h-48 -mx-1 sm:mx-0">
-                              <table className="w-full text-left text-[11px] border-collapse min-w-[240px]">
-                                <thead>
-                                  <tr className="border-b border-surface-800 bg-surface-900/80 text-surface-400 font-mono">
-                                    {Object.keys(source.sample_rows[0]).map((col) => (
-                                      <th key={col} className="py-1.5 px-2.5 font-medium whitespace-nowrap">
-                                        {col}
-                                      </th>
+                          <div className="overflow-x-auto rounded-lg border border-surface-800 max-h-48">
+                            <table className="w-full text-left text-xs">
+                              <thead>
+                                <tr className="border-b border-surface-800 bg-surface-900/80 text-surface-400">
+                                  {Object.keys(source.sample_rows[0]).map((col) => (
+                                    <th key={col} className="py-2 px-3 font-mono whitespace-nowrap">
+                                      {col}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-surface-800/50 font-mono text-surface-200">
+                                {source.sample_rows.slice(0, 5).map((row: Record<string, unknown>, rIdx: number) => (
+                                  <tr key={rIdx}>
+                                    {Object.values(row).map((val, vIdx) => (
+                                      <td key={vIdx} className="py-2 px-3 whitespace-nowrap">
+                                        {typeof val === "number"
+                                          ? val.toLocaleString()
+                                          : String(val ?? "")}
+                                      </td>
                                     ))}
                                   </tr>
-                                </thead>
-                                <tbody className="divide-y divide-surface-850 font-mono text-surface-200">
-                                  {source.sample_rows.slice(0, 5).map((row: Record<string, any>, rIdx: number) => (
-                                    <tr key={rIdx} className="hover:bg-surface-900/40">
-                                      {Object.values(row).map((val: any, vIdx: number) => (
-                                        <td key={vIdx} className="py-1.5 px-2.5 whitespace-nowrap">
-                                          {typeof val === "number"
-                                            ? val.toLocaleString()
-                                            : String(val ?? "")}
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
                         )}
                       </div>
@@ -310,6 +232,6 @@ export function EvidenceExplorer({
           })
         )}
       </div>
-    </div>
+    </SectionCard>
   );
 }

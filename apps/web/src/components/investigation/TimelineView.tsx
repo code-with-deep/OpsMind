@@ -17,6 +17,7 @@ import {
   Copy,
 } from "lucide-react";
 import { Badge } from "../common/Badge";
+import { EmptyState, SectionCard } from "../common/AppUI";
 
 interface TimelineViewProps {
   events: InvestigationEvent[];
@@ -27,13 +28,10 @@ export function TimelineView({ events }: TimelineViewProps) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const toggleExpand = (idx: number) => {
-    setExpandedIndices((prev) => ({
-      ...prev,
-      [idx]: !prev[idx],
-    }));
+    setExpandedIndices((prev) => ({ ...prev, [idx]: !prev[idx] }));
   };
 
-  const handleCopyPayload = (idx: number, payload: any, e: React.MouseEvent) => {
+  const handleCopyPayload = (idx: number, payload: unknown, e: React.MouseEvent) => {
     e.stopPropagation();
     navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
     setCopiedIdx(idx);
@@ -45,122 +43,94 @@ export function TimelineView({ events }: TimelineViewProps) {
     if (type.includes("planner")) return <Brain className="w-3.5 h-3.5 text-indigo-400" />;
     if (type.includes("data_investigator")) return <Database className="w-3.5 h-3.5 text-sky-400" />;
     if (type.includes("knowledge")) return <FileText className="w-3.5 h-3.5 text-purple-400" />;
-    if (type.includes("synthesizer")) return <Sparkles className="w-3.5 h-3.5 text-brand-400" />;
+    if (type.includes("synthesizer")) return <Sparkles className="w-3.5 h-3.5 text-accent-400" />;
     if (type.includes("critic")) return <Scale className="w-3.5 h-3.5 text-amber-400" />;
-    if (type.includes("review") || type.includes("case")) return <MessageSquareCheck className="w-3.5 h-3.5 text-emerald-400" />;
+    if (type.includes("review") || type.includes("case"))
+      return <MessageSquareCheck className="w-3.5 h-3.5 text-emerald-400" />;
     return <CheckCircle className="w-3.5 h-3.5 text-surface-400" />;
   };
 
+  const formatEventLabel = (type: string) =>
+    type
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
   return (
-    <div className="bg-surface-900 border border-surface-800 rounded-2xl overflow-hidden flex flex-col shadow-sm">
-      <div className="p-4 sm:p-5 border-b border-surface-800 flex items-center justify-between shrink-0 gap-2">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-purple-950 border border-purple-800 flex items-center justify-center text-purple-400 shrink-0">
-            <Clock className="w-4 h-4" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-xs sm:text-base font-semibold text-surface-100 truncate">
-              Execution Event Log & Telemetry ({events.length})
-            </h3>
-            <p className="text-[10px] sm:text-[11px] text-surface-400 truncate">
-              Sequential graph telemetry captured in Postgres memory store
-            </p>
-          </div>
-        </div>
-
-        <Badge variant="purple" size="xs" className="shrink-0">
-          Telemetry
-        </Badge>
-      </div>
-
-      <div className="p-3.5 sm:p-5 overflow-y-auto space-y-3 max-h-[650px]">
+    <SectionCard
+      title="Execution Timeline"
+      subtitle={`${events.length} agent events logged during this run`}
+      icon={<Clock className="w-4 h-4" />}
+      noPadding
+    >
+      <div className="p-4 sm:p-5 space-y-4 app-scroll-panel">
         {events.length === 0 ? (
-          <div className="text-center py-12 text-surface-500 text-xs">
-            No telemetry events logged for this investigation.
-          </div>
+          <EmptyState
+            icon={<Clock className="w-8 h-8" />}
+            title="No events yet"
+            description="Agent events will appear here as the investigation runs."
+          />
         ) : (
           events.map((event, idx) => {
             const isExpanded = expandedIndices[idx];
-            const hasPayload =
-              event.payload && Object.keys(event.payload).length > 0;
+            const hasPayload = event.payload && Object.keys(event.payload).length > 0;
 
             return (
-              <div
-                key={idx}
-                className="flex items-start gap-2.5 sm:gap-3 text-xs group transition-all"
-              >
-                {/* Timeline icon & vertical line */}
-                <div className="flex flex-col items-center shrink-0 mt-0.5">
-                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-surface-950 border border-surface-700 flex items-center justify-center shadow-inner">
+              <div key={idx} className="flex items-start gap-3">
+                <div className="flex flex-col items-center shrink-0">
+                  <div className="w-8 h-8 rounded-full app-card flex items-center justify-center">
                     {getEventIcon(event.event_type)}
                   </div>
                   {idx < events.length - 1 && (
-                    <div className="w-px h-full bg-surface-800 my-1 min-h-[16px] sm:min-h-[20px]" />
+                    <div className="w-px flex-1 min-h-[20px] bg-surface-800 my-1" />
                   )}
                 </div>
 
-                {/* Event Card */}
-                <div
-                  className={`flex-1 rounded-xl border p-3 sm:p-3.5 transition-all select-none min-w-0 ${
-                    isExpanded
-                      ? "bg-surface-950 border-surface-700 shadow-sm"
-                      : "bg-surface-950/70 border-surface-800/90 hover:border-surface-750"
-                  }`}
-                >
-                  <div
-                    className={`flex items-center justify-between gap-2 ${
-                      hasPayload ? "cursor-pointer" : ""
+                <div className="flex-1 app-card p-4 min-w-0">
+                  <button
+                    type="button"
+                    className={`w-full flex items-center justify-between gap-2 text-left ${
+                      hasPayload ? "cursor-pointer" : "cursor-default"
                     }`}
                     onClick={() => hasPayload && toggleExpand(idx)}
                   >
-                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0">
-                      <span className="font-mono font-semibold text-surface-200 text-xs truncate">
-                        {event.event_type}
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className="text-sm font-medium text-white">
+                        {formatEventLabel(event.event_type)}
                       </span>
                       <Badge variant="default" size="xs">
-                        #{idx + 1}
+                        Step {idx + 1}
                       </Badge>
                     </div>
-
-                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                      <span className="text-[10px] text-surface-400 font-mono">
-                        {formatDate(event.created_at)}
-                      </span>
-                      {hasPayload && (
-                        <button
-                          type="button"
-                          className="text-surface-400 hover:text-surface-200 p-0.5"
-                          aria-label="Toggle state payload"
-                        >
-                          {isExpanded ? (
-                            <ChevronDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          ) : (
-                            <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          )}
-                        </button>
-                      )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-surface-500">{formatDate(event.created_at)}</span>
+                      {hasPayload &&
+                        (isExpanded ? (
+                          <ChevronDown className="w-4 h-4 text-surface-400" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-surface-400" />
+                        ))}
                     </div>
-                  </div>
+                  </button>
 
-                  {/* Expanded JSON payload preview */}
                   {isExpanded && hasPayload && (
-                    <div className="mt-3 pt-3 border-t border-surface-850 space-y-2 animate-fadeIn">
-                      <div className="flex items-center justify-between text-[10px] font-mono text-surface-400">
-                        <span>Event State Payload</span>
+                    <div className="mt-3 pt-3 border-t border-surface-800/50 space-y-2">
+                      <div className="flex items-center justify-between text-xs text-surface-400">
+                        <span>Event payload</span>
                         <button
                           type="button"
                           onClick={(e) => handleCopyPayload(idx, event.payload, e)}
-                          className="text-surface-400 hover:text-surface-200 flex items-center gap-1"
+                          className="touch-target rounded-md hover:bg-surface-800 text-surface-400 hover:text-surface-200"
+                          aria-label="Copy event payload"
                         >
                           {copiedIdx === idx ? (
-                            <Check className="w-3 h-3 text-emerald-400" />
+                            <Check className="w-3 h-3 text-accent-400" />
                           ) : (
                             <Copy className="w-3 h-3" />
                           )}
-                          <span>{copiedIdx === idx ? "Copied" : "Copy JSON"}</span>
+                          Copy
                         </button>
                       </div>
-                      <pre className="p-2.5 sm:p-3 rounded-lg bg-surface-900 border border-surface-800 text-[10px] sm:text-[11px] font-mono text-surface-300 overflow-x-auto max-h-48 leading-relaxed">
+                      <pre className="p-3 rounded-lg bg-surface-950 border border-surface-800 text-xs font-mono text-surface-300 overflow-x-auto max-h-48 leading-relaxed">
                         {JSON.stringify(event.payload, null, 2)}
                       </pre>
                     </div>
@@ -171,6 +141,6 @@ export function TimelineView({ events }: TimelineViewProps) {
           })
         )}
       </div>
-    </div>
+    </SectionCard>
   );
 }

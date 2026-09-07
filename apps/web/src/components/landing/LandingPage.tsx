@@ -26,6 +26,8 @@ import {
 import { OpsMindLogo } from "../common/OpsMindLogo";
 
 interface LandingPageProps {
+  onGetStarted: () => void;
+  onSignIn: () => void;
   onLaunchConsole: () => void;
   onSelectScenario: (question: string) => void;
   onExploreHistory: () => void;
@@ -33,6 +35,8 @@ interface LandingPageProps {
   onExploreTools: () => void;
   investigationCount?: number;
   approvedCount?: number;
+  /** When true, primary CTAs open the app instead of auth screens. */
+  isAuthenticated?: boolean;
 }
 
 const CAPABILITIES = [
@@ -167,6 +171,8 @@ function CheckItem({ children }: { children: ReactNode }) {
 }
 
 export function LandingPage({
+  onGetStarted,
+  onSignIn,
   onLaunchConsole,
   onSelectScenario,
   onExploreHistory,
@@ -174,10 +180,16 @@ export function LandingPage({
   onExploreTools,
   investigationCount = 0,
   approvedCount = 0,
+  isAuthenticated = false,
 }: LandingPageProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const revenueDemo =
     "Why did our revenue decrease this week (2026-08-17 to 2026-08-23), and what should we do?";
+  const primaryCtaLabel = isAuthenticated ? "Open Console" : "Get Started";
+  const primaryCtaShort = isAuthenticated ? "Console" : "Start";
+  const secondaryCtaLabel = isAuthenticated ? "Open Console" : "Sign in";
+  const onPrimaryCta = isAuthenticated ? onLaunchConsole : onGetStarted;
+  const onSecondaryCta = isAuthenticated ? onLaunchConsole : onSignIn;
 
   return (
     <div className="overflow-hidden bg-[#030712]">
@@ -199,6 +211,13 @@ export function LandingPage({
               <a href="#demos" className="hover:text-surface-100 transition-colors">
                 Demos
               </a>
+              <button
+                type="button"
+                onClick={onSecondaryCta}
+                className="hover:text-surface-100 transition-colors"
+              >
+                {secondaryCtaLabel}
+              </button>
               <a
                 href="http://localhost:8000/docs"
                 target="_blank"
@@ -213,12 +232,12 @@ export function LandingPage({
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={onLaunchConsole}
+                onClick={onPrimaryCta}
                 className="inline-flex items-center gap-2 px-3 sm:px-5 py-2 min-h-10 rounded-full bg-gradient-to-b from-accent-400 to-accent-600 text-surface-950 font-semibold text-xs sm:text-sm shadow-glow-accent hover:scale-[1.02] active:scale-[0.98] transition-transform"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span className="hidden xs:inline">Get Started</span>
-                <span className="xs:hidden">Start</span>
+                <span className="hidden xs:inline">{primaryCtaLabel}</span>
+                <span className="xs:hidden">{primaryCtaShort}</span>
               </button>
 
               <button
@@ -257,6 +276,39 @@ export function LandingPage({
                 API Docs
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  onSecondaryCta();
+                }}
+                className="block w-full text-left px-3 py-2.5 rounded-lg text-sm text-surface-300 hover:bg-surface-900 hover:text-white"
+              >
+                {secondaryCtaLabel}
+              </button>
+              {!isAuthenticated ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    onGetStarted();
+                  }}
+                  className="block w-full text-left px-3 py-2.5 rounded-lg text-sm text-accent-300 hover:bg-surface-900"
+                >
+                  Create workspace
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    onLaunchConsole();
+                  }}
+                  className="block w-full text-left px-3 py-2.5 rounded-lg text-sm text-accent-300 hover:bg-surface-900"
+                >
+                  Open Console
+                </button>
+              )}
             </nav>
           )}
         </div>
@@ -316,16 +368,25 @@ export function LandingPage({
           >
             <button
               type="button"
-              onClick={onLaunchConsole}
+              onClick={onPrimaryCta}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full bg-gradient-to-b from-accent-400 to-accent-600 text-surface-950 font-semibold text-sm shadow-glow-accent hover:scale-[1.02] active:scale-[0.98] transition-transform"
             >
               <Play className="w-4 h-4 fill-current" />
-              Get Started
+              {primaryCtaLabel}
             </button>
+            {!isAuthenticated ? (
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full landing-glass border border-surface-600/80 text-surface-100 font-medium text-sm hover:border-accent-500/40 hover:bg-surface-900/80 transition-all"
+              >
+                Sign in
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => onSelectScenario(revenueDemo)}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full landing-glass border border-surface-600/80 text-surface-100 font-medium text-sm hover:border-accent-500/40 hover:bg-surface-900/80 transition-all"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full border border-transparent text-surface-400 hover:text-accent-300 font-medium text-sm transition-colors"
             >
               Run Revenue Demo
               <ArrowRight className="w-4 h-4" />
@@ -570,19 +631,30 @@ export function LandingPage({
               case memory — {investigationCount} investigations run, {approvedCount} approved.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              {!isAuthenticated ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onGetStarted}
+                    className="w-full sm:w-auto px-7 py-3 rounded-full bg-gradient-to-b from-accent-400 to-accent-600 text-surface-950 font-semibold text-sm shadow-glow-accent hover:scale-[1.02] transition-transform"
+                  >
+                    Create workspace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onSignIn}
+                    className="w-full sm:w-auto px-7 py-3 rounded-full border border-surface-600 text-surface-200 font-medium text-sm hover:border-accent-500/40 transition-colors"
+                  >
+                    Sign in
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 onClick={onLaunchConsole}
-                className="w-full sm:w-auto px-7 py-3 rounded-full bg-gradient-to-b from-accent-400 to-accent-600 text-surface-950 font-semibold text-sm shadow-glow-accent hover:scale-[1.02] transition-transform"
+                className="w-full sm:w-auto px-7 py-3 rounded-full border border-surface-700 text-surface-400 font-medium text-sm hover:border-accent-500/30 hover:text-surface-200 transition-colors"
               >
                 Open Live Console
-              </button>
-              <button
-                type="button"
-                onClick={onExploreCases}
-                className="w-full sm:w-auto px-7 py-3 rounded-full border border-surface-600 text-surface-200 font-medium text-sm hover:border-accent-500/40 transition-colors"
-              >
-                Browse Case Memory
               </button>
             </div>
           </div>

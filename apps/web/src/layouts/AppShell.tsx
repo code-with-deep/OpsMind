@@ -112,6 +112,10 @@ export function AppShell() {
     setIsNewModalOpen(false);
     setLoading(true);
     setGlobalError(null);
+    setCurrentInvestigation(null);
+    // Move to Console immediately so the operator sees the running state
+    // (History/Settings/etc. do not render the investigation loader).
+    navigate(routes.console);
 
     try {
       const result = await api.runInvestigation({ question, wait: true });

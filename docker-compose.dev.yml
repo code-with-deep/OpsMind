@@ -29,5 +29,23 @@ services:
     depends_on:
       - api
 
+  # Local DB browser — http://localhost:5050
+  # Login: admin@example.com / admin
+  # Register server host: db  (not localhost — pgAdmin runs inside Docker)
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: opsmind-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   web_node_modules:

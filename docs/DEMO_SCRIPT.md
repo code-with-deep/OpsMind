@@ -6,30 +6,29 @@ This comprehensive demo script demonstrates all key capabilities of **OpsMind**,
 
 ## Prerequisites & Environment Setup
 
-1. **Start the Stack** (Backend API, Postgres + pgvector, Operator Console):
+1. **Start the Stack** (prefer hot-reload for local work):
    ```powershell
    cd "d:\PROJECTS\AI Projects\OpsMind"
-   docker compose up --build -d
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
    ```
 
-2. **Run Migrations & Seed Baseline Data**:
+2. **Run Migrations** (seed only for the **demo** tenant — real companies upload CSV):
    ```powershell
-   # Apply database schema
-   alembic upgrade head
-
-   # Seed synthetic operational business data & planted failure incidents
-   python -m opsmind.db.seed
-
-   # Ingest knowledge playbooks & standard operating procedures into pgvector
-   python -m opsmind.db.ingest_playbooks
+   docker compose exec api alembic upgrade head
+   docker compose exec api python -m opsmind.db.seed
+   docker compose exec api python -m opsmind.db.ingest_playbooks
    ```
 
-3. **Launch Operator Web Console**:
-   ```powershell
-   cd apps/web
-   npm run dev
-   ```
-   Open **http://localhost:3000** in your web browser. (Ensure your API Key `change-me-opsmind-dev-key` is configured in the header).
+3. **Tenant onboarding (self-serve path)** — use this for multi-tenant demos:
+   1. Open **http://localhost:3000** → **Get Started** → create a workspace (Admin).
+   2. Settings → **Upload CSV ZIP** (`data/csv_templates/sample_tenant_data.zip`)
+      **or** configure a verified **Warehouse connector** (MT6).
+   3. Settings → **Upload SOP** (any Markdown playbook).
+   4. Optional: generate an invite code and join as Investigator; create an API key.
+   5. Investigate only after the **ready** badge appears (CSV or warehouse).
+
+4. **Demo tenant shortcut** (legacy): paste `change-me-opsmind-dev-key` in the header
+   API key modal to use pre-seeded demo data without signup.
 
 ---
 

@@ -27,6 +27,7 @@ from evals.scorers import (
 )
 from evals.types import CaseEvalResult, GoldenCase, SuiteSummary
 from api.app.config import get_settings
+from opsmind.db.seed import DEMO_TENANT_ID
 from opsmind.graph.runner import run_investigation
 
 
@@ -70,6 +71,7 @@ def evaluate_single_case(
         run_res = run_investigation(
             question=case.question,
             settings=settings,
+            tenant_id=DEMO_TENANT_ID,
             use_postgres_checkpoint=use_postgres_checkpoint,
             runtime_overrides=runtime_overrides if runtime_overrides else None,
         )

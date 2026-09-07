@@ -1,23 +1,38 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { RequireAuth } from "./components/auth/RequireAuth";
 import { AppShell } from "./layouts/AppShell";
 import { LandingPageRoute } from "./pages/LandingPageRoute";
 import { ConsolePage } from "./pages/ConsolePage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { CasesPage } from "./pages/CasesPage";
 import { ToolsPage } from "./pages/ToolsPage";
+import { LoginPage } from "./pages/LoginPage";
+import { SignupPage } from "./pages/SignupPage";
+import { JoinPage } from "./pages/JoinPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPageRoute />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/join" element={<JoinPage />} />
 
-      <Route element={<AppShell />}>
+      <Route
+        element={
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        }
+      >
         <Route path="/console" element={<ConsolePage />} />
         <Route path="/console/:investigationId" element={<ConsolePage />} />
         <Route path="/console/:investigationId/:subView" element={<ConsolePage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/cases" element={<CasesPage />} />
         <Route path="/tools" element={<ToolsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

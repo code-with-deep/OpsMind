@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from opsmind.db.seed import DEMO_TENANT_ID
+from opsmind.db.tenant_session import apply_tenant_session
 from opsmind.graph.runner import (
     load_investigation_view,
     reset_graph_cache,
@@ -74,6 +76,7 @@ def test_happy_path_revenue_drop_investigation(settings):
     result = run_investigation(
         question=question,
         settings=settings,
+        tenant_id=DEMO_TENANT_ID,
         use_postgres_checkpoint=False,
     )
     assert result["status"] == "completed"
@@ -95,7 +98,12 @@ def test_happy_path_revenue_drop_investigation(settings):
     engine = create_engine(SYNC_URL, pool_pre_ping=True)
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory() as session:
-        view = load_investigation_view(session, __import__("uuid").UUID(result["investigation_id"]))
+        apply_tenant_session(session, DEMO_TENANT_ID)
+        view = load_investigation_view(
+            session,
+            __import__("uuid").UUID(result["investigation_id"]),
+            tenant_id=DEMO_TENANT_ID,
+        )
     engine.dispose()
 
     assert view["status"] == "completed"

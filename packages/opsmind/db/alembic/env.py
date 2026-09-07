@@ -13,6 +13,7 @@ from opsmind.db.base import Base
 # Import models so Alembic autogenerate / metadata stay aware of tables.
 from opsmind.db import models as _models  # noqa: F401
 from opsmind.db import memory_models as _memory_models  # noqa: F401
+from opsmind.db import tenant_models as _tenant_models  # noqa: F401
 
 config = context.config
 

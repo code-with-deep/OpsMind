@@ -15,6 +15,7 @@ def test_list_templates_nonempty():
     keys = {t["key"] for t in list_templates()}
     assert "revenue_week_totals" in keys
     assert "inventory_by_sku" in keys
+    assert "inventory_low_stock" in keys
 
 
 def test_writable_verbs_blocked_in_template():

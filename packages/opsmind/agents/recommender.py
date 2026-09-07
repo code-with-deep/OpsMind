@@ -6,9 +6,11 @@ import json
 import uuid
 from typing import Any
 
+from opsmind.agents.grounding_rules import compact_findings_for_llm, sql_revenue_values
 from opsmind.agents.llm import LLMError, chat_json, llm_configured
 from opsmind.agents.schemas import Recommendation
 from opsmind.db.session import get_owner_session_factory
+from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
 from opsmind.graph.events import update_investigation, write_event
 from opsmind.graph.state import InvestigationState
 from opsmind.grounding.verifier import (
@@ -39,12 +41,19 @@ def _heuristic_recommendation(
 
     claim_sources = (sql_sources[:2] + rag_sources[:2]) if (sql_sources and rag_sources) else source_ids[:4]
 
+    revs = sql_revenue_values(findings)
+    rev_note = (
+        f"SQL revenue figures observed: {revs}. "
+        if revs
+        else "Confirm week totals from cited SQL evidence. "
+    )
+
     actions = [
-        "Confirm problem-week vs prior-week revenue dip with finance stakeholders.",
-        "If stockout confirmed on SKU-1001: escalate replenishment and pause featured ads.",
-        "If FastShip SLA breaches elevated: divert volume to backup carriers for 48–72h.",
-        "If Cable Flash Sale cannibalized mix: end or reshape the promo.",
-        "If defective_seal returns spiked: quarantine inventory and open supplier ticket.",
+        rev_note + "Align stakeholders on problem vs prior window totals before acting.",
+        "If inventory findings show zero/low available: escalate replenishment and pause featured ads for that SKU.",
+        "If carrier late_count is elevated: divert volume to backup carriers for 48–72h per playbook.",
+        "If a promo overlaps the drop window: evaluate cannibalization and reshape or end the campaign.",
+        "If returns reason spikes (e.g. defective seal): quarantine inventory and open a supplier ticket.",
     ]
     claim_map = []
     for d in drivers:
@@ -57,9 +66,12 @@ def _heuristic_recommendation(
             }
         ]
 
+    summary = hypothesis.get("summary") or "Investigation completed with evidence-backed drivers."
+    if revs and all(str(v) not in summary for v in revs[:2]):
+        summary = f"{summary} SQL revenue values: {revs}."
+
     return Recommendation(
-        summary=hypothesis.get("summary")
-        or "Investigation completed with evidence-backed drivers.",
+        summary=summary,
         actions=actions[:5],
         confidence=float(hypothesis.get("confidence") or 0.6),
         claim_source_map=claim_map,
@@ -76,22 +88,26 @@ def _llm_recommendation(
     runtime: dict[str, Any],
 ) -> Recommendation:
     valid = sorted(collect_valid_source_ids(findings))
+    compact = compact_findings_for_llm(findings, max_rows=40)
     system = (
         "You are the OpsMind Recommender. Return JSON with keys: summary, actions "
         "(list), confidence (0-1), claim_source_map (list of {claim, source_ids}), "
         "status='completed', assumptions (list of strings). "
         "Every claim MUST cite source_ids only from the allowed list. "
-        "Never invent source_ids. Label assumptions explicitly."
+        "Never invent source_ids. Label assumptions explicitly. "
+        "HARD RULES: Copy revenue dollars, cancel counts, carrier names, and SKUs ONLY from "
+        "findings rows. Do not use demo placeholders (SKU-1001, FastShip) unless present in findings. "
+        "Summary must include exact SQL week revenue totals when present."
     )
     user = json.dumps(
         {
             "question": question,
             "hypothesis": hypothesis,
             "allowed_source_ids": valid,
-            "finding_count": len(findings),
+            "findings": compact,
         },
         default=str,
-    )
+    )[:16000]
     raw = chat_json(
         api_key=runtime["llm_api_key"],
         api_base=runtime["llm_api_base"],
@@ -108,6 +124,7 @@ def recommender_node(state: InvestigationState) -> dict[str, Any]:
     findings = state.get("findings") or []
     assumptions = list(state.get("assumptions") or [])
     inv_id = uuid.UUID(state["investigation_id"])
+    tenant_id = tenant_id_from_runtime(runtime)
     valid_ids = collect_valid_source_ids(findings)
 
     if llm_configured(runtime.get("llm_api_key")):
@@ -150,8 +167,10 @@ def recommender_node(state: InvestigationState) -> dict[str, Any]:
         }
         factory = get_owner_session_factory(runtime["database_url_sync"])
         with factory() as session:
+            apply_tenant_session(session, tenant_id)
             write_event(
                 session,
+                tenant_id=tenant_id,
                 investigation_id=inv_id,
                 event_type="citation_verifier_blocked",
                 payload={
@@ -176,8 +195,10 @@ def recommender_node(state: InvestigationState) -> dict[str, Any]:
     payload = rec.model_dump()
     factory = get_owner_session_factory(runtime["database_url_sync"])
     with factory() as session:
+        apply_tenant_session(session, tenant_id)
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=inv_id,
             event_type="agent_recommender",
             payload={
@@ -188,6 +209,7 @@ def recommender_node(state: InvestigationState) -> dict[str, Any]:
         )
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=inv_id,
             event_type="citation_verifier_passed",
             payload={"claims": len(rec.claim_source_map)},

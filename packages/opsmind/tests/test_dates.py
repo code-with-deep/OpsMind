@@ -4,7 +4,11 @@ from datetime import date
 
 import pytest
 
-from opsmind.tools.dates import normalize_date_range
+from opsmind.tools.dates import (
+    extract_compare_windows_from_question,
+    extract_skus_from_text,
+    normalize_date_range,
+)
 
 
 def test_problem_and_prior_week_aliases():
@@ -32,3 +36,31 @@ def test_explicit_iso_range():
 def test_invalid_expression():
     with pytest.raises(ValueError):
         normalize_date_range("next quarter")
+
+
+def test_extract_compare_windows_nova_q1():
+    q = (
+        "Why did Nova Retail revenue drop in 2026-09-08 to 2026-09-14 "
+        "compared to 2026-09-01 to 2026-09-07, and what should we do?"
+    )
+    windows = extract_compare_windows_from_question(q)
+    assert windows is not None
+    problem, prior = windows
+    assert problem.start == date(2026, 9, 8)
+    assert problem.end == date(2026, 9, 14)
+    assert prior.start == date(2026, 9, 1)
+    assert prior.end == date(2026, 9, 7)
+
+
+def test_extract_single_window_with_and():
+    q = "Which carrier had delays between 2026-09-08 and 2026-09-14?"
+    windows = extract_compare_windows_from_question(q)
+    assert windows is not None
+    problem, prior = windows
+    assert problem.start == date(2026, 9, 8)
+    assert problem.end == date(2026, 9, 14)
+    assert prior.end == date(2026, 9, 7)
+
+
+def test_extract_skus():
+    assert extract_skus_from_text("check SKU-N100 and sku-n200") == ["SKU-N100", "SKU-N200"]

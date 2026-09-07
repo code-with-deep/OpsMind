@@ -21,6 +21,22 @@ export default defineConfig(({ mode }) => {
         usePolling: true,
       },
       proxy: {
+        "/auth": {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
+        "/playbooks": {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
+        "/data": {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
+        "/warehouse": {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
         "/investigations": {
           target: apiProxyTarget,
           changeOrigin: true,

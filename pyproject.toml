@@ -17,6 +17,10 @@ dependencies = [
   "langgraph>=0.2.0",
   "langgraph-checkpoint-postgres>=2.0.0",
   "psycopg[binary,pool]>=3.2.0",
+  "PyJWT>=2.9.0",
+  "email-validator>=2.0.0",
+  "python-multipart>=0.0.9",
+  "cryptography>=43.0.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +40,7 @@ packages = [
   "api.app",
   "api.app.routes",
   "opsmind",
+  "opsmind.auth",
   "opsmind.db",
   "opsmind.domain",
   "opsmind.graph",
@@ -51,6 +56,7 @@ api = "apps/api"
 "api.app" = "apps/api/app"
 "api.app.routes" = "apps/api/app/routes"
 opsmind = "packages/opsmind"
+"opsmind.auth" = "packages/opsmind/auth"
 "opsmind.db" = "packages/opsmind/db"
 "opsmind.domain" = "packages/opsmind/domain"
 "opsmind.graph" = "packages/opsmind/graph"

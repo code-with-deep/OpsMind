@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-# Locked to the synthetic seed calendar (see docs/SEED_SCENARIOS.md).
+# Locked fallback when the question has no explicit dates (legacy demo calendar).
 PROBLEM_WEEK_START = date(2026, 8, 17)
 PROBLEM_WEEK_END = date(2026, 8, 23)
 PRIOR_WEEK_START = date(2026, 8, 10)
@@ -30,10 +30,16 @@ class DateRange:
 
 
 _ISO = r"\d{4}-\d{2}-\d{2}"
+_RANGE_SEP = r"(?:to|and|:|–|-)"
 _EXPLICIT_RANGE = re.compile(
-    rf"^\s*(?:from\s+)?(?P<start>{_ISO})\s*(?:to|:|–|-)\s*(?P<end>{_ISO})\s*$",
+    rf"^\s*(?:from\s+)?(?P<start>{_ISO})\s*{_RANGE_SEP}\s*(?P<end>{_ISO})\s*$",
     re.IGNORECASE,
 )
+_INLINE_RANGE = re.compile(
+    rf"(?P<start>{_ISO})\s*{_RANGE_SEP}\s*(?P<end>{_ISO})",
+    re.IGNORECASE,
+)
+_SKU_RE = re.compile(r"\bSKU-[A-Za-z0-9_-]+\b", re.IGNORECASE)
 
 
 def _week_containing(d: date) -> tuple[date, date]:
@@ -95,3 +101,50 @@ def normalize_date_range(
         "Unrecognized date expression. Use problem_week, prior_week, this_week, "
         "last_week, or YYYY-MM-DD:YYYY-MM-DD"
     )
+
+
+def extract_skus_from_text(text: str) -> list[str]:
+    """Return unique SKU tokens in appearance order (normalized upper-case)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _SKU_RE.finditer(text or ""):
+        sku = match.group(0).upper()
+        if sku not in seen:
+            seen.add(sku)
+            out.append(sku)
+    return out
+
+
+def extract_compare_windows_from_question(
+    question: str,
+) -> tuple[DateRange, DateRange] | None:
+    """Parse problem/prior windows from an operator question when dates are explicit.
+
+    Prefers the pattern: ``… in A to B compared to C to D`` → problem=A–B, prior=C–D.
+    If only one range is present, prior is the immediately preceding equal-length window.
+    """
+    ranges: list[DateRange] = []
+    for match in _INLINE_RANGE.finditer(question or ""):
+        start = date.fromisoformat(match.group("start"))
+        end = date.fromisoformat(match.group("end"))
+        if end < start:
+            continue
+        ranges.append(
+            DateRange(start, end, "explicit", f"{start.isoformat()} to {end.isoformat()}")
+        )
+    if not ranges:
+        return None
+    if len(ranges) >= 2:
+        # First mentioned range is usually the problem window in OpsMind prompts.
+        return ranges[0], ranges[1]
+    problem = ranges[0]
+    span = (problem.end - problem.start).days
+    prior_end = problem.start - timedelta(days=1)
+    prior_start = prior_end - timedelta(days=span)
+    prior = DateRange(
+        prior_start,
+        prior_end,
+        "derived_prior",
+        f"{prior_start.isoformat()} to {prior_end.isoformat()}",
+    )
+    return problem, prior

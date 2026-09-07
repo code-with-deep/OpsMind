@@ -23,6 +23,7 @@ from opsmind.tools.embeddings import local_embed
 def create_investigation(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     question: str,
     window_start=None,
     window_end=None,
@@ -30,6 +31,7 @@ def create_investigation(
 ) -> Investigation:
     inv = Investigation(
         id=uuid.uuid4(),
+        tenant_id=tenant_id,
         question=question,
         status=status,
         window_start=window_start,
@@ -40,6 +42,7 @@ def create_investigation(
     session.add(
         InvestigationEvent(
             id=uuid.uuid4(),
+            tenant_id=tenant_id,
             investigation_id=inv.id,
             event_type="investigation_created",
             payload={"question": question},
@@ -53,6 +56,7 @@ def create_investigation(
 def persist_tool_result(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     investigation_id: uuid.UUID | None,
     tool_name: str,
     template_key: str | None,
@@ -69,6 +73,7 @@ def persist_tool_result(
         # Standalone tool demos still get a durable parent investigation.
         auto = create_investigation(
             session,
+            tenant_id=tenant_id,
             question=f"auto:{tool_name}:{template_key or 'query'}",
             status="tool_demo",
         )
@@ -76,6 +81,7 @@ def persist_tool_result(
 
     invocation = ToolInvocation(
         id=uuid.uuid4(),
+        tenant_id=tenant_id,
         investigation_id=inv_id,
         tool_name=tool_name,
         template_key=template_key,
@@ -91,6 +97,7 @@ def persist_tool_result(
 
     finding = Finding(
         id=uuid.uuid4(),
+        tenant_id=tenant_id,
         investigation_id=inv_id,
         tool_invocation_id=invocation.id,
         source_id=source_id,
@@ -110,6 +117,7 @@ def persist_tool_result(
 def record_review(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     investigation_id: uuid.UUID,
     decision: str,  # "approved", "rejected", "comment"
     reviewer: str,
@@ -117,11 +125,12 @@ def record_review(
 ) -> tuple[Review, CaseSummary | None]:
     """Record operator review and conditionally promote approved runs to Case Memory (P6)."""
     inv = session.get(Investigation, investigation_id)
-    if inv is None:
+    if inv is None or inv.tenant_id != tenant_id:
         raise KeyError(f"Investigation {investigation_id} not found")
 
     rev = Review(
         id=uuid.uuid4(),
+        tenant_id=tenant_id,
         investigation_id=investigation_id,
         decision=decision.strip().lower(),
         reviewer=reviewer.strip() or "operator",
@@ -133,6 +142,7 @@ def record_review(
     session.add(
         InvestigationEvent(
             id=uuid.uuid4(),
+            tenant_id=tenant_id,
             investigation_id=investigation_id,
             event_type="review_submitted",
             payload={
@@ -175,6 +185,7 @@ def record_review(
         else:
             case_summary = CaseSummary(
                 id=uuid.uuid4(),
+                tenant_id=tenant_id,
                 investigation_id=investigation_id,
                 review_id=rev.id,
                 title=f"Case: {inv.question[:80]}",
@@ -190,6 +201,7 @@ def record_review(
         session.add(
             InvestigationEvent(
                 id=uuid.uuid4(),
+                tenant_id=tenant_id,
                 investigation_id=investigation_id,
                 event_type="case_promoted_to_memory",
                 payload={
@@ -210,12 +222,14 @@ def record_review(
 def list_case_summaries(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Return stored case memory summaries (P6)."""
     stmt = (
         select(CaseSummary)
+        .where(CaseSummary.tenant_id == tenant_id)
         .order_by(desc(CaseSummary.created_at))
         .limit(limit)
         .offset(offset)
@@ -241,6 +255,7 @@ def list_case_summaries(
 def query_similar_cases(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     query: str,
     top_k: int = 3,
     min_score: float = 0.1,
@@ -264,12 +279,13 @@ def query_similar_cases(
             confidence,
             1 - (embedding <=> CAST(:embedding AS vector)) AS score
         FROM case_summaries
+        WHERE tenant_id = :tenant_id
         ORDER BY embedding <=> CAST(:embedding AS vector)
         LIMIT :top_k
         """
     )
     rows = session.execute(
-        sql, {"embedding": embedding_literal, "top_k": top_k}
+        sql, {"embedding": embedding_literal, "top_k": top_k, "tenant_id": str(tenant_id)}
     ).mappings().all()
 
     out: list[dict[str, Any]] = []

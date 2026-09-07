@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from opsmind.agents.grounding_rules import numeric_mismatch_gaps
 from opsmind.agents.schemas import Critique
 from opsmind.db.session import get_owner_session_factory
+from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
 from opsmind.graph.events import update_investigation, write_event
 from opsmind.graph.state import InvestigationState
 
@@ -20,6 +22,8 @@ def _text_blob(findings: list[dict[str, Any]], hypothesis: dict[str, Any]) -> st
     for f in findings:
         parts.append(str(f.get("purpose") or ""))
         parts.append(str((f.get("evidence") or {}).get("claim") or ""))
+        for row in f.get("rows") or []:
+            parts.append(str(row))
         for hit in f.get("hits") or []:
             parts.append(str(hit.get("doc_key") or ""))
             parts.append(str(hit.get("title") or ""))
@@ -63,14 +67,35 @@ def score_critique(
     if revenueish or findings:
         driver_signals = {
             "stockout_or_inventory": any(
-                k in blob for k in ("stockout", "inventory", "sku-1001", "earbuds")
+                k in blob
+                for k in (
+                    "stockout",
+                    "inventory",
+                    "available",
+                    "on_hand",
+                    "low-stock",
+                    "low stock",
+                    "zero_days",
+                )
             ),
-            "carrier_sla": any(k in blob for k in ("carrier", "sla", "fastship", "delay")),
-            "promo": any(k in blob for k in ("campaign", "promo", "flash sale", "cannibal")),
+            "carrier_sla": any(
+                k in blob for k in ("carrier", "sla", "delay", "delivered_late", "late_count")
+            ),
+            "promo": any(
+                k in blob for k in ("campaign", "promo", "discount", "featured_sku")
+            ),
             "returns": any(k in blob for k in ("return", "defective", "refund")),
         }
         if findings and sum(1 for v in driver_signals.values() if v) < 1:
             gaps.append("missing_driver_coverage")
+
+    gaps.extend(
+        numeric_mismatch_gaps(
+            hypothesis=hypothesis,
+            findings=findings,
+            question=question,
+        )
+    )
 
     seen: set[str] = set()
     uniq_gaps: list[str] = []
@@ -84,6 +109,8 @@ def score_critique(
         "missing_sql_evidence",
         "missing_playbook_evidence",
         "missing_driver_coverage",
+        "numeric_mismatch_with_sql_evidence",
+        "missing_revenue_sql_totals",
     }
     has_critical = any(g in critical for g in uniq_gaps)
 
@@ -114,6 +141,7 @@ def score_critique(
 def critic_node(state: InvestigationState) -> dict[str, Any]:
     runtime = state.get("runtime") or {}
     inv_id = uuid.UUID(state["investigation_id"])
+    tenant_id = tenant_id_from_runtime(runtime)
     hypothesis = state.get("hypothesis") or {}
     findings = state.get("findings") or []
     retry_count = int(state.get("retry_count") or 0)
@@ -145,8 +173,10 @@ def critic_node(state: InvestigationState) -> dict[str, Any]:
 
     factory = get_owner_session_factory(runtime["database_url_sync"])
     with factory() as session:
+        apply_tenant_session(session, tenant_id)
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=inv_id,
             event_type="agent_critic",
             payload={

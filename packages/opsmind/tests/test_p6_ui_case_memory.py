@@ -12,7 +12,9 @@ from sqlalchemy import create_engine, text
 
 from api.app.config import clear_settings_cache
 from api.app.main import create_app
-from opsmind.db.memory_models import CaseSummary, Investigation, Review
+from opsmind.db.memory_models import CaseSummary, Review
+from opsmind.db.seed import DEMO_TENANT_ID
+from opsmind.db.tenant_session import apply_tenant_session
 from opsmind.db.session import get_owner_session_factory
 from opsmind.graph.runner import list_investigations_view, load_investigation_view, reset_graph_cache, run_investigation
 from opsmind.memory.persist import create_investigation, list_case_summaries, query_similar_cases, record_review
@@ -84,8 +86,10 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_reject_creates_review_without_case_summary():
     factory = get_owner_session_factory(SYNC_URL)
     with factory() as session:
+        apply_tenant_session(session, DEMO_TENANT_ID)
         inv = create_investigation(
             session,
+            tenant_id=DEMO_TENANT_ID,
             question="Why did warehouse pick time double?",
             status="completed",
         )
@@ -93,6 +97,7 @@ def test_reject_creates_review_without_case_summary():
 
         rev, case_summary = record_review(
             session,
+            tenant_id=DEMO_TENANT_ID,
             investigation_id=inv_id,
             decision="rejected",
             reviewer="alice@opsmind.internal",
@@ -116,8 +121,10 @@ def test_reject_creates_review_without_case_summary():
 def test_approve_creates_review_and_promotes_case_memory():
     factory = get_owner_session_factory(SYNC_URL)
     with factory() as session:
+        apply_tenant_session(session, DEMO_TENANT_ID)
         inv = create_investigation(
             session,
+            tenant_id=DEMO_TENANT_ID,
             question="Why did FastShip SLA drop in Midwest DC?",
             status="completed",
         )
@@ -136,6 +143,7 @@ def test_approve_creates_review_and_promotes_case_memory():
 
         rev, case_summary = record_review(
             session,
+            tenant_id=DEMO_TENANT_ID,
             investigation_id=inv_id,
             decision="approved",
             reviewer="lead_ops@opsmind.internal",
@@ -151,7 +159,10 @@ def test_approve_creates_review_and_promotes_case_memory():
 
         # Query similar cases
         matches = query_similar_cases(
-            session, query="FastShip Midwest carrier delays", top_k=20
+            session,
+            tenant_id=DEMO_TENANT_ID,
+            query="FastShip Midwest carrier delays",
+            top_k=20,
         )
         assert len(matches) >= 1
         top_ids = [m["investigation_id"] for m in matches]

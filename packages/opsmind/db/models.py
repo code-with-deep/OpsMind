@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
+import uuid
 
 from sqlalchemy import (
     Boolean,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from opsmind.db.base import Base
@@ -25,9 +27,13 @@ from opsmind.db.base import Base
 
 class Product(Base):
     __tablename__ = "products"
+    __table_args__ = (UniqueConstraint("tenant_id", "sku", name="uq_products_tenant_sku"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    sku: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    sku: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(128), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
@@ -40,9 +46,13 @@ class Product(Base):
 
 class Carrier(Base):
     __tablename__ = "carriers"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_carriers_tenant_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
     sla_hours: Mapped[int] = mapped_column(Integer, nullable=False)
 
     shipments: Mapped[list[Shipment]] = relationship(back_populates="carrier")
@@ -52,6 +62,9 @@ class Campaign(Base):
     __tablename__ = "campaigns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     channel: Mapped[str] = mapped_column(String(64), nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -65,6 +78,9 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     order_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     channel: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -84,6 +100,9 @@ class OrderItem(Base):
     __tablename__ = "order_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -97,9 +116,14 @@ class OrderItem(Base):
 
 class InventorySnapshot(Base):
     __tablename__ = "inventory_snapshots"
-    __table_args__ = (UniqueConstraint("snapshot_date", "product_id", name="uq_inventory_day_product"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "snapshot_date", "product_id", name="uq_inventory_tenant_day_product"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
     on_hand: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -113,6 +137,9 @@ class Shipment(Base):
     __tablename__ = "shipments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     carrier_id: Mapped[int] = mapped_column(ForeignKey("carriers.id"), nullable=False, index=True)
     ship_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
@@ -129,6 +156,9 @@ class Return(Base):
     __tablename__ = "returns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     order_item_id: Mapped[int] = mapped_column(
         ForeignKey("order_items.id"), nullable=False, index=True
@@ -144,6 +174,9 @@ class Return(Base):
 class DailyMetric(Base):
     __tablename__ = "daily_metrics"
 
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), primary_key=True
+    )
     metric_date: Mapped[date] = mapped_column(Date, primary_key=True)
     revenue: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     orders_count: Mapped[int] = mapped_column(Integer, nullable=False)

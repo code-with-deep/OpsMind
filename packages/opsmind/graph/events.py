@@ -13,6 +13,7 @@ from opsmind.db.memory_models import Investigation, InvestigationEvent
 def write_event(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     investigation_id: uuid.UUID,
     event_type: str,
     payload: dict[str, Any] | None = None,
@@ -20,6 +21,7 @@ def write_event(
     session.add(
         InvestigationEvent(
             id=uuid.uuid4(),
+            tenant_id=tenant_id,
             investigation_id=investigation_id,
             event_type=event_type,
             payload=payload or {},

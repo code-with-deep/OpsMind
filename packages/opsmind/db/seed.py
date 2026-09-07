@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import random
+import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -31,6 +32,7 @@ from opsmind.db.models import (
     Return,
     Shipment,
 )
+from opsmind.db import tenant_models as _tenant_models  # noqa: F401 — register tenants FK targets
 
 # Fixed calendar so demos/evals are stable across machines.
 SEED_START = date(2026, 7, 6)  # Monday
@@ -44,6 +46,9 @@ TOP_SKU = "SKU-1001"  # Wireless Earbuds Pro — stockout victim
 PROMO_SKU = "SKU-1004"  # Cable Pack — flash-sale cannibalization
 RETURN_SKU = "SKU-1002"  # Smart Bottle — quality return spike
 FASTSHIP = "FastShip Express"
+
+# Fixed demo tenant id — must match Alembic 0007_multi_tenant_core.
+DEMO_TENANT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 
 
 def _require_sync_url() -> str:
@@ -122,7 +127,7 @@ def clear_business_data(session: Session) -> None:
     session.commit()
 
 
-def seed_products(session: Session) -> dict[str, Product]:
+def seed_products(session: Session, tenant_id: uuid.UUID) -> dict[str, Product]:
     catalog = [
         (TOP_SKU, "Wireless Earbuds Pro", "Audio", "129.00", "45.00"),
         (RETURN_SKU, "Smart Water Bottle", "Lifestyle", "49.00", "18.00"),
@@ -136,6 +141,7 @@ def seed_products(session: Session) -> dict[str, Product]:
     products: dict[str, Product] = {}
     for sku, name, category, price, cost in catalog:
         p = Product(
+            tenant_id=tenant_id,
             sku=sku,
             name=name,
             category=category,
@@ -149,21 +155,22 @@ def seed_products(session: Session) -> dict[str, Product]:
     return products
 
 
-def seed_carriers(session: Session) -> dict[str, Carrier]:
+def seed_carriers(session: Session, tenant_id: uuid.UUID) -> dict[str, Carrier]:
     carriers = {
-        FASTSHIP: Carrier(name=FASTSHIP, sla_hours=48),
-        "Regional Freight": Carrier(name="Regional Freight", sla_hours=72),
-        "Economy Parcel": Carrier(name="Economy Parcel", sla_hours=120),
+        FASTSHIP: Carrier(tenant_id=tenant_id, name=FASTSHIP, sla_hours=48),
+        "Regional Freight": Carrier(tenant_id=tenant_id, name="Regional Freight", sla_hours=72),
+        "Economy Parcel": Carrier(tenant_id=tenant_id, name="Economy Parcel", sla_hours=120),
     }
     session.add_all(carriers.values())
     session.flush()
     return carriers
 
 
-def seed_campaigns(session: Session) -> None:
+def seed_campaigns(session: Session, tenant_id: uuid.UUID) -> None:
     session.add_all(
         [
             Campaign(
+                tenant_id=tenant_id,
                 name="Summer Steady — Email",
                 channel="email",
                 start_date=date(2026, 7, 10),
@@ -173,6 +180,7 @@ def seed_campaigns(session: Session) -> None:
                 notes="Healthy promo; no major distortion.",
             ),
             Campaign(
+                tenant_id=tenant_id,
                 name="PROBLEM: Cable Flash Sale",
                 channel="paid_social",
                 start_date=PROBLEM_WEEK_START,
@@ -224,6 +232,7 @@ def _pick_sku(weights: list[tuple[str, float]]) -> str:
 
 def seed_orders_and_ops(
     session: Session,
+    tenant_id: uuid.UUID,
     products: dict[str, Product],
     carriers: dict[str, Carrier],
 ) -> None:
@@ -263,6 +272,7 @@ def seed_orders_and_ops(
             available = max(0, on_hand - reserved)
             session.add(
                 InventorySnapshot(
+                    tenant_id=tenant_id,
                     snapshot_date=d,
                     product_id=products[sku].id,
                     on_hand=on_hand,
@@ -304,6 +314,7 @@ def seed_orders_and_ops(
 
             order = Order(
                 id=order_id_seq,
+                tenant_id=tenant_id,
                 order_date=d,
                 status=status,
                 channel=random.choice(channels),
@@ -316,6 +327,7 @@ def seed_orders_and_ops(
 
             item = OrderItem(
                 id=item_id_seq,
+                tenant_id=tenant_id,
                 order_id=order_id_seq,
                 product_id=product.id,
                 quantity=qty,
@@ -358,6 +370,7 @@ def seed_orders_and_ops(
                 session.add(
                     Shipment(
                         id=shipment_id_seq,
+                        tenant_id=tenant_id,
                         order_id=order_id_seq,
                         carrier_id=carrier.id,
                         ship_date=ship_date,
@@ -386,6 +399,7 @@ def seed_orders_and_ops(
                     session.add(
                         Return(
                             id=return_id_seq,
+                            tenant_id=tenant_id,
                             order_id=order_id_seq,
                             order_item_id=item_id_seq,
                             return_date=min(SEED_END, d + timedelta(days=random.randint(1, 5))),
@@ -412,6 +426,7 @@ def seed_orders_and_ops(
         avg_f = Decimal(str(round(sum(fulfill) / len(fulfill), 2))) if fulfill else Decimal("0")
         session.add(
             DailyMetric(
+                tenant_id=tenant_id,
                 metric_date=d,
                 revenue=stats["revenue"].quantize(Decimal("0.01")),
                 orders_count=stats["orders"],
@@ -424,42 +439,53 @@ def seed_orders_and_ops(
         )
 
 
+def _resolve_demo_tenant_id(session: Session) -> uuid.UUID:
+    row = session.execute(
+        text("SELECT id FROM tenants WHERE slug = 'demo' LIMIT 1")
+    ).scalar()
+    if row is not None:
+        return uuid.UUID(str(row))
+    return DEMO_TENANT_ID
+
+
 def run_seed() -> None:
     random.seed(42)
     engine = create_engine(_require_sync_url(), future=True)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
     with SessionLocal() as session:
+        tenant_id = _resolve_demo_tenant_id(session)
         clear_business_data(session)
-        products = seed_products(session)
-        carriers = seed_carriers(session)
-        seed_campaigns(session)
-        seed_orders_and_ops(session, products, carriers)
+        products = seed_products(session, tenant_id)
+        carriers = seed_carriers(session, tenant_id)
+        seed_campaigns(session, tenant_id)
+        seed_orders_and_ops(session, tenant_id, products, carriers)
         session.commit()
 
     ensure_readonly_role(engine)
 
     # Print verification summary for operators
     with SessionLocal() as session:
+        tenant_id = _resolve_demo_tenant_id(session)
         prior = session.execute(
             text(
                 """
                 SELECT COALESCE(SUM(revenue),0)
                 FROM daily_metrics
-                WHERE metric_date BETWEEN :a AND :b
+                WHERE tenant_id = :tenant_id AND metric_date BETWEEN :a AND :b
                 """
             ),
-            {"a": PRIOR_WEEK_START, "b": PRIOR_WEEK_END},
+            {"tenant_id": str(tenant_id), "a": PRIOR_WEEK_START, "b": PRIOR_WEEK_END},
         ).scalar()
         problem = session.execute(
             text(
                 """
                 SELECT COALESCE(SUM(revenue),0)
                 FROM daily_metrics
-                WHERE metric_date BETWEEN :a AND :b
+                WHERE tenant_id = :tenant_id AND metric_date BETWEEN :a AND :b
                 """
             ),
-            {"a": PROBLEM_WEEK_START, "b": PROBLEM_WEEK_END},
+            {"tenant_id": str(tenant_id), "a": PROBLEM_WEEK_START, "b": PROBLEM_WEEK_END},
         ).scalar()
         print("Seed complete.")
         print(f"Prior week  ({PRIOR_WEEK_START} -> {PRIOR_WEEK_END}): revenue={prior}")

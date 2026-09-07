@@ -5,7 +5,12 @@ import path from "path";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const apiProxyTarget = env.VITE_API_PROXY_TARGET || "http://localhost:8000";
+  // Docker Compose sets VITE_API_PROXY_TARGET=http://api:8000 on the process env.
+  // loadEnv() only reads .env files, so prefer process.env for container networking.
+  const apiProxyTarget =
+    process.env.VITE_API_PROXY_TARGET ||
+    env.VITE_API_PROXY_TARGET ||
+    "http://localhost:8000";
 
   return {
     plugins: [react()],

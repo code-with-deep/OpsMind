@@ -6,7 +6,6 @@ import {
   Check,
   ChevronRight,
   Database,
-  ExternalLink,
   FileText,
   GitBranch,
   Layers,
@@ -218,15 +217,6 @@ export function LandingPage({
               >
                 {secondaryCtaLabel}
               </button>
-              <a
-                href="http://localhost:8000/docs"
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-surface-100 transition-colors inline-flex items-center gap-1"
-              >
-                API Docs
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
             </nav>
 
             <div className="flex items-center gap-2 shrink-0">
@@ -266,15 +256,6 @@ export function LandingPage({
                 className="block px-3 py-2.5 rounded-lg text-sm text-surface-300 hover:bg-surface-900 hover:text-white"
               >
                 Demos
-              </a>
-              <a
-                href="http://localhost:8000/docs"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-surface-300 hover:bg-surface-900 hover:text-white"
-              >
-                API Docs
-                <ExternalLink className="w-3.5 h-3.5" />
               </a>
               <button
                 type="button"
@@ -722,16 +703,6 @@ export function LandingPage({
             <ul className="space-y-2 text-xs text-surface-500">
               <li>FastAPI · Postgres · pgvector</li>
               <li>React 19 · Vite · Tailwind</li>
-              <li className="flex items-center gap-1">
-                <a
-                  href="http://localhost:8000/docs"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hover:text-accent-400 flex items-center gap-1 transition-colors"
-                >
-                  API Docs <ExternalLink className="w-3 h-3" />
-                </a>
-              </li>
             </ul>
           </div>
         </div>

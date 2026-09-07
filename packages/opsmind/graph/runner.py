@@ -103,6 +103,7 @@ def build_runtime(settings: Any, overrides: dict[str, Any] | None = None) -> dic
         "llm_model_strong": settings.llm_model_strong,
         "max_critic_retries": int(getattr(settings, "max_critic_retries", 2)),
         "max_tool_calls_per_run": max_tools,
+        "tenant_id": None,
     }
     if overrides:
         runtime.update(overrides)
@@ -117,6 +118,8 @@ def _persist_audit(
     investigation_id: uuid.UUID,
     question: str,
     status: str,
+    tenant_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
     final_state: dict[str, Any] | None = None,
     guardrail_flags: dict[str, Any] | None = None,
     errors: list[str] | None = None,
@@ -138,6 +141,9 @@ def _persist_audit(
         if rec.get("verification_errors"):
             citation_verified = False
 
+    resolved_tenant = tenant_id or runtime.get("tenant_id")
+    resolved_user = user_id or runtime.get("user_id")
+
     audit = build_audit_record(
         question=question,
         status=status,
@@ -149,6 +155,8 @@ def _persist_audit(
         errors=errors if errors is not None else list(state.get("errors") or []),
         guardrail_flags=guardrail_flags,
         citation_verified=citation_verified,
+        tenant_id=resolved_tenant,
+        user_id=resolved_user,
     )
     finalize_audit(session, investigation_id=investigation_id, audit=audit)
     return audit
@@ -158,7 +166,9 @@ def run_investigation(
     *,
     question: str,
     settings: Any,
+    tenant_id: uuid.UUID,
     investigation_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
     use_postgres_checkpoint: bool = True,
     runtime_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -168,12 +178,16 @@ def run_investigation(
     guard = check_input_guardrails(question)
     if not guard.allowed:
         with factory() as session:
+            from opsmind.db.tenant_session import apply_tenant_session
+
+            apply_tenant_session(session, tenant_id)
             inv = create_investigation(
-                session, question=question, status="guardrail_rejected"
+                session, tenant_id=tenant_id, question=question, status="guardrail_rejected"
             )
             investigation_id = inv.id
             write_event(
                 session,
+                tenant_id=tenant_id,
                 investigation_id=investigation_id,
                 event_type="guardrail_rejected",
                 payload={
@@ -187,6 +201,8 @@ def run_investigation(
                 investigation_id=investigation_id,
                 question=question,
                 status="guardrail_rejected",
+                tenant_id=tenant_id,
+                user_id=user_id,
                 final_state={"node_trace": [], "retry_count": 0, "findings": [], "errors": []},
                 guardrail_flags={"input": guard.rule or "rejected", "reason": guard.reason},
                 errors=[guard.reason],
@@ -207,13 +223,20 @@ def run_investigation(
         }
 
     with factory() as session:
+        from opsmind.db.tenant_session import apply_tenant_session
+
+        apply_tenant_session(session, tenant_id)
         if investigation_id is None:
-            inv = create_investigation(session, question=question, status="running")
+            inv = create_investigation(
+                session, tenant_id=tenant_id, question=question, status="running"
+            )
             investigation_id = inv.id
         else:
             inv = session.get(Investigation, investigation_id)
-            if inv is None:
-                inv = create_investigation(session, question=question, status="running")
+            if inv is None or inv.tenant_id != tenant_id:
+                inv = create_investigation(
+                    session, tenant_id=tenant_id, question=question, status="running"
+                )
                 investigation_id = inv.id
             else:
                 update_investigation(
@@ -221,6 +244,7 @@ def run_investigation(
                 )
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=investigation_id,
             event_type="graph_started",
             payload={"question_redacted": redact_pii(question)[:500]},
@@ -232,6 +256,8 @@ def run_investigation(
     thread_id = str(investigation_id)
     runtime = build_runtime(settings, runtime_overrides)
     runtime["investigation_id"] = thread_id
+    runtime["tenant_id"] = str(tenant_id)
+    runtime["user_id"] = str(user_id) if user_id else None
     max_tools = int(runtime.get("max_tool_calls_per_run") or 40)
     register_run_budget(thread_id, max_tools)
 
@@ -252,6 +278,9 @@ def run_investigation(
         final_state = graph.invoke(initial, config=config)
     except Exception as exc:  # noqa: BLE001
         with factory() as session:
+            from opsmind.db.tenant_session import apply_tenant_session
+
+            apply_tenant_session(session, tenant_id)
             update_investigation(
                 session,
                 investigation_id=investigation_id,
@@ -259,6 +288,7 @@ def run_investigation(
             )
             write_event(
                 session,
+                tenant_id=tenant_id,
                 investigation_id=investigation_id,
                 event_type="graph_failed",
                 payload={"error": redact_pii(str(exc))[:1000]},
@@ -268,6 +298,8 @@ def run_investigation(
                 investigation_id=investigation_id,
                 question=question,
                 status="failed",
+                tenant_id=tenant_id,
+                user_id=user_id,
                 final_state={"errors": [str(exc)], "node_trace": [], "findings": []},
                 errors=[str(exc)],
             )
@@ -277,6 +309,9 @@ def run_investigation(
     # Persist terminal status from graph if set.
     terminal = final_state.get("status") or "completed"
     with factory() as session:
+        from opsmind.db.tenant_session import apply_tenant_session
+
+        apply_tenant_session(session, tenant_id)
         if terminal in _TERMINAL_STATUSES:
             update_investigation(
                 session,
@@ -285,6 +320,7 @@ def run_investigation(
             )
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=investigation_id,
             event_type="graph_completed",
             payload={
@@ -298,6 +334,8 @@ def run_investigation(
             investigation_id=investigation_id,
             question=question,
             status=terminal,
+            tenant_id=tenant_id,
+            user_id=user_id,
             final_state=final_state,
         )
     clear_run_budget(thread_id)
@@ -318,9 +356,11 @@ def run_investigation(
     return sanitize_output_payload(result)
 
 
-def load_investigation_view(session: Session, investigation_id: uuid.UUID) -> dict[str, Any]:
+def load_investigation_view(
+    session: Session, investigation_id: uuid.UUID, *, tenant_id: uuid.UUID
+) -> dict[str, Any]:
     inv = session.get(Investigation, investigation_id)
-    if inv is None:
+    if inv is None or inv.tenant_id != tenant_id:
         raise KeyError(f"Investigation {investigation_id} not found")
 
     events = sorted(inv.events, key=lambda e: e.created_at)
@@ -396,6 +436,7 @@ def load_investigation_view(session: Session, investigation_id: uuid.UUID) -> di
 def list_investigations_view(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     limit: int = 50,
     offset: int = 0,
     status: str | None = None,
@@ -403,7 +444,11 @@ def list_investigations_view(
     """List past investigations with summary metadata for the Operator Console (P6)."""
     from sqlalchemy import desc, select
 
-    stmt = select(Investigation).order_by(desc(Investigation.created_at))
+    stmt = (
+        select(Investigation)
+        .where(Investigation.tenant_id == tenant_id)
+        .order_by(desc(Investigation.created_at))
+    )
     if status and status.strip():
         stmt = stmt.where(Investigation.status == status.strip())
     stmt = stmt.limit(min(max(1, limit), 100)).offset(max(0, offset))

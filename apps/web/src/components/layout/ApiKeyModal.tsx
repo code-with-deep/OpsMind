@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal } from "../common/Modal";
 import { Button } from "../common/Button";
-import { getApiKey, setApiKey, api } from "../../lib/api";
+import { getApiKey, setApiKey, api, DEMO_BOOTSTRAP_API_KEY } from "../../lib/api";
 import { Key, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface ApiKeyModalProps {
@@ -54,24 +54,26 @@ export function ApiKeyModal({ isOpen, onClose, onSaved }: ApiKeyModalProps) {
           <span>OpsMind API Authentication (P5)</span>
         </div>
       }
-      subtitle="Configure your operator API key to authorize investigation and tool execution."
+      subtitle="Optional: paste a company API key for Tools / scripts. Console access still requires email login."
       maxWidth="md"
     >
       <div className="space-y-4">
         <div>
           <label className="block text-xs font-medium text-surface-300 mb-1.5">
-            OPSMIND_API_KEY
+            Company API key
           </label>
           <input
             type="password"
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
-            placeholder="e.g. change-me-opsmind-dev-key"
+            placeholder={`e.g. omk_… or ${DEMO_BOOTSTRAP_API_KEY}`}
             className="w-full px-3 py-2 bg-surface-950 border border-surface-700 rounded-lg text-sm text-surface-100 placeholder:text-surface-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono"
           />
           <p className="text-xs text-surface-400 mt-1.5">
-            Default dev key from <code className="text-surface-300">.env</code> is{" "}
-            <code className="text-brand-300">change-me-opsmind-dev-key</code>.
+            Sign in with email for your company investigations. Pasting the demo key{" "}
+            <code className="text-brand-300">{DEMO_BOOTSTRAP_API_KEY}</code> alone
+            will not open Console/History — and the demo tenant may have no CSV data
+            (you will see “upload company data”).
           </p>
         </div>
 

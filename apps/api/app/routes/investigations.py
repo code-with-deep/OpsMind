@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from api.app.auth import require_api_key
+from api.app.auth import require_tenant_context
 from api.app.config import get_settings
+from api.app.deps import get_tenant_session
+from opsmind.db.ingest_csv import tenant_data_ready
 from opsmind.db.session import dispose_owner_engine, get_owner_session_factory
+from opsmind.db.tenant_session import apply_tenant_session
+from opsmind.domain.tenant import TenantContext
 from opsmind.graph.runner import (
     list_investigations_view,
     load_investigation_view,
@@ -25,18 +28,8 @@ from opsmind.memory.persist import list_case_summaries, record_review
 router = APIRouter(
     prefix="/investigations",
     tags=["investigations"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_tenant_context)],
 )
-
-
-def get_owner_session() -> Iterator[Session]:
-    settings = get_settings()
-    factory = get_owner_session_factory(settings.database_url_sync)
-    session = factory()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 class CreateInvestigationBody(BaseModel):
@@ -64,14 +57,15 @@ class SubmitReviewBody(BaseModel):
 
 @router.get("")
 def list_investigations(
+    tenant: TenantContext = Depends(require_tenant_context),
     status: str | None = Query(None, description="Filter by terminal status"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    session: Session = Depends(get_owner_session),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     """List past investigations with status and approval markers (P6)."""
     items = list_investigations_view(
-        session, limit=limit, offset=offset, status=status
+        session, tenant_id=tenant.tenant_id, limit=limit, offset=offset, status=status
     )
     return {
         "investigations": items,
@@ -83,12 +77,15 @@ def list_investigations(
 
 @router.get("/cases/memory")
 def get_case_memory(
+    tenant: TenantContext = Depends(require_tenant_context),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    session: Session = Depends(get_owner_session),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     """List approved case summaries in organizational memory (P6)."""
-    cases = list_case_summaries(session, limit=limit, offset=offset)
+    cases = list_case_summaries(
+        session, tenant_id=tenant.tenant_id, limit=limit, offset=offset
+    )
     return {
         "cases": sanitize_output_payload(cases),
         "count": len(cases),
@@ -96,15 +93,39 @@ def get_case_memory(
 
 
 @router.post("")
-def create_and_run_investigation(body: CreateInvestigationBody) -> dict[str, Any]:
+def create_and_run_investigation(
+    body: CreateInvestigationBody,
+    tenant: TenantContext = Depends(require_tenant_context),
+    session: Session = Depends(get_tenant_session),
+) -> dict[str, Any]:
     settings = get_settings()
     if not body.wait:
         raise HTTPException(
             status_code=400,
             detail="Async enqueue is not enabled; set wait=true.",
         )
+
+    ready = tenant_data_ready(session, tenant.tenant_id)
+    if not ready["ready"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "tenant_data_not_ready",
+                "reason": (
+                    "Upload company CSV data in Settings before running investigations. "
+                    "Required: products.csv, orders.csv, order_items.csv (ZIP)."
+                ),
+                "ready": ready,
+            },
+        )
+
     try:
-        result = run_investigation(question=body.question, settings=settings)
+        result = run_investigation(
+            question=body.question,
+            settings=settings,
+            tenant_id=tenant.tenant_id,
+            user_id=tenant.user_id,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -121,7 +142,10 @@ def create_and_run_investigation(body: CreateInvestigationBody) -> dict[str, Any
 
     factory = get_owner_session_factory(settings.database_url_sync)
     with factory() as session:
-        view = load_investigation_view(session, uuid.UUID(result["investigation_id"]))
+        apply_tenant_session(session, tenant.tenant_id)
+        view = load_investigation_view(
+            session, uuid.UUID(result["investigation_id"]), tenant_id=tenant.tenant_id
+        )
     view["run"] = {
         "node_trace": result.get("node_trace"),
         "finding_count": result.get("finding_count"),
@@ -134,10 +158,13 @@ def create_and_run_investigation(body: CreateInvestigationBody) -> dict[str, Any
 @router.get("/{investigation_id}")
 def get_investigation(
     investigation_id: uuid.UUID,
-    session: Session = Depends(get_owner_session),
+    tenant: TenantContext = Depends(require_tenant_context),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     try:
-        return load_investigation_view(session, investigation_id)
+        return load_investigation_view(
+            session, investigation_id, tenant_id=tenant.tenant_id
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -146,7 +173,8 @@ def get_investigation(
 def submit_investigation_review(
     investigation_id: uuid.UUID,
     body: SubmitReviewBody,
-    session: Session = Depends(get_owner_session),
+    tenant: TenantContext = Depends(require_tenant_context),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     """Operator review: approve/reject/comment.
 
@@ -155,6 +183,7 @@ def submit_investigation_review(
     try:
         rev, case_summary = record_review(
             session,
+            tenant_id=tenant.tenant_id,
             investigation_id=investigation_id,
             decision=body.decision,
             reviewer=body.reviewer,

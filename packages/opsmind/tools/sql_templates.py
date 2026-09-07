@@ -93,6 +93,25 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
         required_params=("sku", "start_date", "end_date"),
         allowlisted_tables=("inventory_snapshots", "products"),
     ),
+    "inventory_low_stock": SqlTemplate(
+        key="inventory_low_stock",
+        description="SKUs that hit low available stock in a date window (stockout scan).",
+        sql="""
+            SELECT p.sku, p.name,
+                   MIN(s.available) AS min_available,
+                   MAX(s.available) AS max_available,
+                   COUNT(*) AS snapshot_days,
+                   SUM(CASE WHEN s.available <= 0 THEN 1 ELSE 0 END) AS zero_days
+            FROM inventory_snapshots s
+            JOIN products p ON p.id = s.product_id
+            WHERE s.snapshot_date BETWEEN :start_date AND :end_date
+            GROUP BY p.sku, p.name
+            HAVING MIN(s.available) <= 2
+            ORDER BY min_available ASC, zero_days DESC
+        """,
+        required_params=("start_date", "end_date"),
+        allowlisted_tables=("inventory_snapshots", "products"),
+    ),
     "carrier_sla": SqlTemplate(
         key="carrier_sla",
         description="Shipment outcomes by carrier in a date window.",

@@ -21,7 +21,13 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run("api.app.main:app", host=host, port=port)
+    reload = os.environ.get("UVICORN_RELOAD", "").lower() in ("1", "true", "yes")
+    run_kwargs: dict = {"host": host, "port": port}
+    if reload:
+        run_kwargs["reload"] = True
+        run_kwargs["reload_dirs"] = ["/app/apps", "/app/packages"]
+
+    uvicorn.run("api.app.main:app", **run_kwargs)
 
 
 if __name__ == "__main__":

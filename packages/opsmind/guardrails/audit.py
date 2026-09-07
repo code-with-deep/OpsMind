@@ -30,6 +30,8 @@ def build_audit_record(
     errors: list[str] | None = None,
     guardrail_flags: dict[str, Any] | None = None,
     citation_verified: bool | None = None,
+    tenant_id: uuid.UUID | str | None = None,
+    user_id: uuid.UUID | str | None = None,
 ) -> dict[str, Any]:
     return {
         "question_fingerprint": _question_fingerprint(question),
@@ -43,8 +45,10 @@ def build_audit_record(
         "errors": list(errors or []),
         "guardrail_flags": guardrail_flags or {},
         "citation_verified": citation_verified,
+        "tenant_id": str(tenant_id) if tenant_id else None,
+        "user_id": str(user_id) if user_id else None,
         "completed_at": datetime.now(timezone.utc).isoformat(),
-        "audit_version": 1,
+        "audit_version": 2,
     }
 
 
@@ -54,18 +58,24 @@ def finalize_audit(
     investigation_id: uuid.UUID,
     audit: dict[str, Any],
 ) -> None:
+    inv = session.get(Investigation, investigation_id)
+    tenant_id = inv.tenant_id if inv is not None else None
     update_investigation(session, investigation_id=investigation_id, audit=audit)
-    write_event(
-        session,
-        investigation_id=investigation_id,
-        event_type="audit_finalized",
-        payload={
-            "status": audit.get("status"),
-            "tool_calls_used": audit.get("tool_calls_used"),
-            "retry_count": audit.get("retry_count"),
-            "citation_verified": audit.get("citation_verified"),
-        },
-    )
+    if tenant_id is not None:
+        write_event(
+            session,
+            tenant_id=tenant_id,
+            investigation_id=investigation_id,
+            event_type="audit_finalized",
+            payload={
+                "status": audit.get("status"),
+                "tool_calls_used": audit.get("tool_calls_used"),
+                "retry_count": audit.get("retry_count"),
+                "citation_verified": audit.get("citation_verified"),
+                "tenant_id": audit.get("tenant_id"),
+                "user_id": audit.get("user_id"),
+            },
+        )
 
 
 def ensure_investigation_has_audit(inv: Investigation) -> bool:

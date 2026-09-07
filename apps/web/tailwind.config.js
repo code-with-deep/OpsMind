@@ -4,6 +4,9 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      screens: {
+        xs: "480px",
+      },
       colors: {
         brand: {
           50: "#eef2ff",
@@ -33,8 +36,41 @@ export default {
           925: "#0b1120",
           950: "#020617",
         },
+        accent: {
+          300: "#86efac",
+          400: "#4ade80",
+          500: "#22c55e",
+          600: "#16a34a",
+          700: "#15803d",
+          950: "#052e16",
+        },
       },
       fontFamily: {
+        display: [
+          "Fraunces",
+          "Georgia",
+          "Cambria",
+          "Times New Roman",
+          "serif",
+        ],
+        heading: [
+          "DM Serif Display",
+          "Georgia",
+          "Cambria",
+          "Times New Roman",
+          "serif",
+        ],
+        subheading: [
+          "Merienda",
+          "cursive",
+        ],
+        appHeading: [
+          "Vollkorn",
+          "Georgia",
+          "Cambria",
+          "Times New Roman",
+          "serif",
+        ],
         sans: [
           "Inter",
           "-apple-system",
@@ -57,19 +93,29 @@ export default {
         glow: "0 0 20px -5px rgba(99, 102, 241, 0.25)",
         "glow-sm": "0 0 10px -2px rgba(99, 102, 241, 0.2)",
         "glow-success": "0 0 15px -3px rgba(16, 185, 129, 0.25)",
+        "glow-accent": "0 0 40px -10px rgba(34, 197, 94, 0.45)",
+        "glow-accent-lg": "0 0 80px -20px rgba(34, 197, 94, 0.35)",
         subtle: "0 1px 3px 0 rgba(0, 0, 0, 0.37), 0 1px 2px -1px rgba(0, 0, 0, 0.37)",
         card: "0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4)",
       },
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "fade-in": "fadeIn 0.2s ease-out forwards",
+        "fade-in-up": "fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards",
         "slide-up": "slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards",
         "scale-in": "scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+        "glow-pulse": "glowPulse 4s ease-in-out infinite",
+        float: "float 6s ease-in-out infinite",
+        marquee: "marquee 28s linear infinite",
       },
       keyframes: {
         fadeIn: {
           "0%": { opacity: "0" },
           "100%": { opacity: "1" },
+        },
+        fadeInUp: {
+          "0%": { opacity: "0", transform: "translateY(28px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
         slideUp: {
           "0%": { opacity: "0", transform: "translateY(10px)" },
@@ -78,6 +124,18 @@ export default {
         scaleIn: {
           "0%": { opacity: "0", transform: "scale(0.97)" },
           "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        glowPulse: {
+          "0%, 100%": { opacity: "0.45", transform: "scale(1)" },
+          "50%": { opacity: "0.75", transform: "scale(1.04)" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-10px)" },
+        },
+        marquee: {
+          "0%": { transform: "translateX(0)" },
+          "100%": { transform: "translateX(-50%)" },
         },
       },
     },

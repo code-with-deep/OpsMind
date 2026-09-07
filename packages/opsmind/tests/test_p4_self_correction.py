@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 
 from opsmind.agents.critic import score_critique
 from opsmind.agents.triage import classify_question
+from opsmind.db.seed import DEMO_TENANT_ID
 from opsmind.graph.runner import reset_graph_cache, run_investigation
 from opsmind.grounding.verifier import verify_claim_source_map
 from opsmind.tools.sql_tool import dispose_readonly_engine
@@ -113,6 +114,7 @@ def test_e2e_poem_unsupported(settings):
     result = run_investigation(
         question="write a poem about warehouses",
         settings=settings,
+        tenant_id=DEMO_TENANT_ID,
         use_postgres_checkpoint=False,
     )
     assert result["status"] == "unsupported"
@@ -124,6 +126,7 @@ def test_e2e_payroll_unsupported(settings):
     result = run_investigation(
         question="Explain payroll overtime costs for warehouse associates",
         settings=settings,
+        tenant_id=DEMO_TENANT_ID,
         use_postgres_checkpoint=False,
     )
     assert result["status"] == "unsupported"
@@ -136,6 +139,7 @@ def test_e2e_vague_needs_clarification(settings):
     result = run_investigation(
         question="why are things bad?",
         settings=settings,
+        tenant_id=DEMO_TENANT_ID,
         use_postgres_checkpoint=False,
     )
     assert result["status"] == "needs_clarification"
@@ -149,6 +153,7 @@ def test_e2e_critic_retry_when_sql_blocked_first_pass(settings):
             "and what should we do?"
         ),
         settings=settings,
+        tenant_id=DEMO_TENANT_ID,
         use_postgres_checkpoint=False,
         runtime_overrides={"block_sql_on_first_pass": True},
     )

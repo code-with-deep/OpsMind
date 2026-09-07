@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from opsmind.db.memory_models import Finding, ToolInvocation
 from opsmind.grounding.registry import SourceIdRegistry
+from opsmind.db.seed import DEMO_TENANT_ID
+from opsmind.db.tenant_session import apply_tenant_session
 from opsmind.tools.rag_tool import run_rag_tool
 from opsmind.tools.sql_tool import SqlToolError, dispose_readonly_engine, run_sql_tool
 
@@ -52,6 +54,7 @@ def owner_session() -> Session:
     engine = create_engine(SYNC_URL, pool_pre_ping=True)
     factory = sessionmaker(engine, expire_on_commit=False)
     session = factory()
+    apply_tenant_session(session, DEMO_TENANT_ID)
     try:
         yield session
     finally:
@@ -67,6 +70,7 @@ def test_sql_tool_persists_invocation_and_finding(owner_session: Session):
         params={"start_date": "2026-08-17", "end_date": "2026-08-23"},
         database_url_readonly=READONLY_URL,
         owner_session=owner_session,
+        tenant_id=DEMO_TENANT_ID,
         registry=registry,
     )
     assert result.rows
@@ -92,6 +96,7 @@ def test_sql_unknown_template_does_not_execute(owner_session: Session):
             params={},
             database_url_readonly=READONLY_URL,
             owner_session=owner_session,
+            tenant_id=DEMO_TENANT_ID,
         )
     after_count = len(owner_session.scalars(select(ToolInvocation)).all())
     assert after_count == before_count
@@ -101,6 +106,7 @@ def test_rag_stockout_escalation_top_hit(owner_session: Session):
     result = run_rag_tool(
         query="stockout escalation for top seller inventory",
         owner_session=owner_session,
+        tenant_id=DEMO_TENANT_ID,
         min_score=0.01,
     )
     assert result.hits, "expected at least one playbook hit"

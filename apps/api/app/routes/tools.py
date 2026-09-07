@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from api.app.auth import require_api_key
+from api.app.auth import require_tenant_context
 from api.app.config import get_settings
+from api.app.deps import get_tenant_session
+from opsmind.domain.tenant import TenantContext
 from opsmind.guardrails.input import check_input_guardrails
 from opsmind.guardrails.output import sanitize_output_payload
 from opsmind.memory.persist import create_investigation
@@ -25,24 +25,8 @@ from opsmind.tools.sql_tool import SqlToolError, dispose_readonly_engine, run_sq
 router = APIRouter(
     prefix="/tools",
     tags=["tools"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_tenant_context)],
 )
-
-_owner_engine = None
-_owner_session_factory: sessionmaker[Session] | None = None
-
-
-def get_owner_session() -> Iterator[Session]:
-    global _owner_engine, _owner_session_factory
-    settings = get_settings()
-    if _owner_session_factory is None:
-        _owner_engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
-        _owner_session_factory = sessionmaker(_owner_engine, expire_on_commit=False)
-    session = _owner_session_factory()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 class DateNormalizeRequest(BaseModel):
@@ -86,7 +70,8 @@ def dates_normalize(body: DateNormalizeRequest) -> dict[str, Any]:
 @router.post("/investigations")
 def investigations_create(
     body: CreateInvestigationRequest,
-    session: Session = Depends(get_owner_session),
+    tenant: TenantContext = Depends(require_tenant_context),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     guard = check_input_guardrails(body.question)
     if not guard.allowed:
@@ -99,6 +84,7 @@ def investigations_create(
         )
     inv = create_investigation(
         session,
+        tenant_id=tenant.tenant_id,
         question=body.question,
         window_start=body.window_start,
         window_end=body.window_end,
@@ -117,7 +103,8 @@ def investigations_create(
 @router.post("/sql/run")
 def sql_run(
     body: SqlRunRequest,
-    session: Session = Depends(get_owner_session),
+    tenant: TenantContext = Depends(require_tenant_context),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     settings = get_settings()
     try:
@@ -126,6 +113,7 @@ def sql_run(
             params=body.params,
             database_url_readonly=settings.database_url_readonly,
             owner_session=session,
+            tenant_id=tenant.tenant_id,
             investigation_id=body.investigation_id,
         )
     except SqlToolError as exc:
@@ -150,7 +138,8 @@ def sql_run(
 @router.post("/rag/query")
 def rag_query(
     body: RagRunRequest,
-    session: Session = Depends(get_owner_session),
+    tenant: TenantContext = Depends(require_tenant_context),
+    session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     guard = check_input_guardrails(body.query)
     if not guard.allowed:
@@ -165,6 +154,7 @@ def rag_query(
         result = run_rag_tool(
             query=body.query,
             owner_session=session,
+            tenant_id=tenant.tenant_id,
             investigation_id=body.investigation_id,
             top_k=body.top_k,
             min_score=body.min_score,
@@ -197,9 +187,4 @@ def rag_query(
 
 
 def dispose_tool_engines() -> None:
-    global _owner_engine, _owner_session_factory
     dispose_readonly_engine()
-    if _owner_engine is not None:
-        _owner_engine.dispose()
-        _owner_engine = None
-        _owner_session_factory = None

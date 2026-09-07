@@ -3,7 +3,7 @@ import { cn } from "../../lib/utils";
 import { Loader2 } from "lucide-react";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "danger" | "ghost" | "outline" | "success" | "brand";
+  variant?: "primary" | "secondary" | "danger" | "ghost" | "outline" | "success" | "brand" | "accent";
   size?: "xs" | "sm" | "md" | "lg";
   loading?: boolean;
   icon?: React.ReactNode;
@@ -23,7 +23,9 @@ export function Button({
 }: ButtonProps) {
   const variantStyles = {
     primary:
-      "bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white shadow-sm border border-brand-500/50 focus:ring-brand-500/40",
+      "bg-accent-600 hover:bg-accent-500 active:bg-accent-700 text-surface-950 shadow-glow-accent border border-accent-500/50 focus:ring-accent-500/40 font-semibold",
+    accent:
+      "bg-gradient-to-b from-accent-400 to-accent-600 hover:from-accent-300 hover:to-accent-500 active:from-accent-500 active:to-accent-700 text-surface-950 shadow-glow-accent border border-accent-500/40 focus:ring-accent-500/40 font-semibold",
     brand:
       "bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 active:from-brand-700 active:to-indigo-700 text-white shadow-glow-sm border border-brand-400/40 focus:ring-brand-500/40",
     secondary:
@@ -39,10 +41,10 @@ export function Button({
   };
 
   const sizeStyles = {
-    xs: "px-2 py-1 text-xs font-medium rounded-md gap-1.5",
-    sm: "px-2.5 py-1.5 text-xs font-medium rounded-lg gap-1.5",
-    md: "px-3.5 py-2 text-xs sm:text-sm font-medium rounded-lg gap-2",
-    lg: "px-4 py-2.5 text-sm sm:text-base font-semibold rounded-xl gap-2.5",
+    xs: "px-2.5 py-2 text-xs font-medium rounded-md gap-1.5 min-h-9",
+    sm: "px-3 py-2 text-xs font-medium rounded-lg gap-1.5 min-h-10",
+    md: "px-3.5 py-2.5 text-sm font-medium rounded-lg gap-2 min-h-11",
+    lg: "px-4 py-3 text-sm sm:text-base font-semibold rounded-xl gap-2.5 min-h-12",
   };
 
   return (

@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from api.app.auth import require_admin, require_tenant_context, require_user_session
 from api.app.config import get_settings
 from api.app.deps import get_tenant_session
-from opsmind.auth.api_keys import generate_api_key, hash_api_key, key_prefix
 from opsmind.auth.invites import (
     generate_invite_code,
     hash_invite_code,
@@ -24,7 +23,7 @@ from opsmind.auth.invites import (
 from opsmind.auth.jwt_tokens import create_access_token
 from opsmind.auth.passwords import hash_password, verify_password
 from opsmind.db.session import get_owner_session_factory
-from opsmind.db.tenant_models import ApiKey, InviteCode, Tenant, TenantSettings, User
+from opsmind.db.tenant_models import AccessRequest, InviteCode, Notification, Tenant, TenantSettings, User
 from opsmind.domain.tenant import TenantContext
 from opsmind.guardrails.output import sanitize_output_payload
 
@@ -156,7 +155,6 @@ def signup(body: SignupBody) -> dict[str, Any]:
                     * 1024,
                     "max_csv_upload_bytes": settings.csv_max_upload_mb * 1024 * 1024,
                     "max_csv_rows": settings.csv_max_rows,
-                    "max_api_keys": settings.auth_max_api_keys,
                 },
             )
         )
@@ -202,6 +200,11 @@ def login(body: LoginBody) -> dict[str, Any]:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Tenant is not active",
             )
+        if user.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account access has been revoked. Please contact your workspace admin.",
+            )
         return sanitize_output_payload(_issue_token(user, tenant))
 
 
@@ -219,7 +222,7 @@ def me(tenant: TenantContext = Depends(require_user_session)) -> dict[str, Any]:
 
 @router.post("/join")
 def join_with_invite(body: JoinInviteBody) -> dict[str, Any]:
-    """Redeem invite code → Investigator in that tenant only."""
+    """Redeem invite code → create AccessRequest (pending admin approval). No JWT returned."""
     settings = get_settings()
     email = str(body.email).strip().lower()
     code = body.invite_code.strip().upper()
@@ -231,8 +234,9 @@ def join_with_invite(body: JoinInviteBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with factory() as session:
-        existing = session.scalar(select(User).where(User.email == email))
-        if existing is not None:
+        # Block if email already has an active user account
+        existing_user = session.scalar(select(User).where(User.email == email))
+        if existing_user is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Email already belongs to a company — one user per company in MVP",
@@ -257,18 +261,155 @@ def join_with_invite(body: JoinInviteBody) -> dict[str, Any]:
         if tenant is None or tenant.status != "active":
             raise HTTPException(status_code=400, detail="Invite tenant is not active")
 
-        user = User(
+        # Check for any existing access request for this email in this tenant (any status)
+        existing_request = session.scalar(
+            select(AccessRequest).where(
+                AccessRequest.tenant_id == tenant.id,
+                AccessRequest.requester_email == email,
+            )
+        )
+        if existing_request is not None:
+            if existing_request.status == "approved":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This email has already been approved — please sign in with your credentials.",
+                )
+            if existing_request.status == "pending":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An access request for this email is already pending. Please wait for admin review.",
+                )
+            # status == "rejected" → re-open the request with new credentials
+            # Reset all review fields so it enters the queue fresh
+            now = datetime.now(timezone.utc)
+            existing_request.status = "pending"
+            existing_request.password_hash = password_hash
+            existing_request.invite_code_id = invite.id
+            existing_request.reviewed_by = None
+            existing_request.reviewed_at = None
+            existing_request.rejection_reason = None
+            existing_request.created_at = now
+            existing_request.user_id = None
+            invite.use_count += 1
+
+            # Notify admins about the re-submitted request
+            admin_users = session.scalars(
+                select(User).where(
+                    User.tenant_id == tenant.id,
+                    User.role == "admin",
+                    User.status == "active",
+                )
+            ).all()
+            for admin in admin_users:
+                session.add(
+                    Notification(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant.id,
+                        recipient_user_id=admin.id,
+                        type="access_request_submitted",
+                        title="Access request re-submitted",
+                        body=f"{email} has re-submitted an access request to your workspace.",
+                        related_entity_id=existing_request.id,
+                        related_entity_type="access_request",
+                        is_read=False,
+                    )
+                )
+
+            session.commit()
+            session.refresh(existing_request)
+            return sanitize_output_payload(
+                {
+                    "status": "pending",
+                    "message": "Access request re-submitted successfully. An admin will review it shortly.",
+                    "request_id": str(existing_request.id),
+                }
+            )
+
+        # No existing request — create a fresh one
+        access_request = AccessRequest(
             id=uuid.uuid4(),
             tenant_id=tenant.id,
-            email=email,
+            invite_code_id=invite.id,
+            requester_email=email,
             password_hash=password_hash,
-            role="investigator",
+            status="pending",
         )
         invite.use_count += 1
-        session.add(user)
+        session.add(access_request)
+
+        # Notify all admins in this tenant
+        admin_users = session.scalars(
+            select(User).where(
+                User.tenant_id == tenant.id,
+                User.role == "admin",
+                User.status == "active",
+            )
+        ).all()
+        for admin in admin_users:
+            session.add(
+                Notification(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant.id,
+                    recipient_user_id=admin.id,
+                    type="access_request_submitted",
+                    title="New access request",
+                    body=f"{email} is requesting access to your workspace.",
+                    related_entity_id=access_request.id,
+                    related_entity_type="access_request",
+                    is_read=False,
+                )
+            )
+
         session.commit()
-        session.refresh(user)
-        return sanitize_output_payload(_issue_token(user, tenant))
+        session.refresh(access_request)
+        return sanitize_output_payload(
+            {
+                "status": "pending",
+                "message": "Access request submitted. You will be notified when an admin reviews your request.",
+                "request_id": str(access_request.id),
+            }
+        )
+
+
+@router.get("/request-status")
+def get_request_status(email: str, invite_code: str) -> dict[str, Any]:
+    """Poll access request status (no auth required — public, rate-limit by IP if needed later)."""
+    settings = get_settings()
+    normalized_email = email.strip().lower()
+    code = invite_code.strip().upper()
+    factory = get_owner_session_factory(settings.database_url_sync)
+
+    with factory() as session:
+        invite = session.scalar(
+            select(InviteCode).where(
+                InviteCode.code_hash == hash_invite_code(code),
+            )
+        )
+        if invite is None:
+            raise HTTPException(status_code=404, detail="Invite code not found")
+
+        req = session.scalar(
+            select(AccessRequest).where(
+                AccessRequest.tenant_id == invite.tenant_id,
+                AccessRequest.requester_email == normalized_email,
+            )
+        )
+        if req is None:
+            raise HTTPException(status_code=404, detail="No access request found for this email")
+
+        return sanitize_output_payload(
+            {
+                "status": req.status,
+                "message": (
+                    "Your access request is pending admin review."
+                    if req.status == "pending"
+                    else "Your access request has been approved. You can now sign in."
+                    if req.status == "approved"
+                    else "Your access request was rejected."
+                ),
+                "rejection_reason": req.rejection_reason if req.status == "rejected" else None,
+            }
+        )
 
 
 @router.post("/invites")
@@ -407,99 +548,3 @@ def update_tenant_profile(
     )
 
 
-class CreateApiKeyBody(BaseModel):
-    name: str = Field(default="default", min_length=1, max_length=128)
-
-
-@router.post("/api-keys")
-def create_api_key(
-    body: CreateApiKeyBody,
-    tenant: TenantContext = Depends(require_admin),
-    session: Session = Depends(get_tenant_session),
-) -> dict[str, Any]:
-    settings = get_settings()
-    ts = session.get(TenantSettings, tenant.tenant_id)
-    limits = dict(ts.soft_limits or {}) if ts else {}
-    max_keys = int(limits.get("max_api_keys") or settings.auth_max_api_keys)
-
-    active_count = session.scalar(
-        select(func.count())
-        .select_from(ApiKey)
-        .where(ApiKey.tenant_id == tenant.tenant_id, ApiKey.revoked_at.is_(None))
-    ) or 0
-    if int(active_count) >= max_keys:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Soft limit: at most {max_keys} active API keys",
-        )
-
-    raw = generate_api_key()
-    row = ApiKey(
-        id=uuid.uuid4(),
-        tenant_id=tenant.tenant_id,
-        name=(body.name or "default").strip()[:128],
-        key_hash=hash_api_key(raw),
-        key_prefix=key_prefix(raw),
-        scopes={},
-        created_by=str(tenant.user_id) if tenant.user_id else None,
-    )
-    session.add(row)
-    session.commit()
-    session.refresh(row)
-    return sanitize_output_payload(
-        {
-            "api_key": {
-                "id": str(row.id),
-                "name": row.name,
-                "key": raw,
-                "key_prefix": row.key_prefix,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            },
-            "message": "Copy this API key now — it will not be shown again.",
-        }
-    )
-
-
-@router.get("/api-keys")
-def list_api_keys(
-    tenant: TenantContext = Depends(require_admin),
-    session: Session = Depends(get_tenant_session),
-) -> dict[str, Any]:
-    rows = session.scalars(
-        select(ApiKey)
-        .where(ApiKey.tenant_id == tenant.tenant_id)
-        .order_by(ApiKey.created_at.desc())
-    ).all()
-    items = [
-        {
-            "id": str(r.id),
-            "name": r.name,
-            "key_prefix": r.key_prefix,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "revoked_at": r.revoked_at.isoformat() if r.revoked_at else None,
-            "active": r.revoked_at is None,
-        }
-        for r in rows
-    ]
-    return sanitize_output_payload({"api_keys": items, "count": len(items)})
-
-
-@router.post("/api-keys/{key_id}/revoke")
-def revoke_api_key(
-    key_id: uuid.UUID,
-    tenant: TenantContext = Depends(require_admin),
-    session: Session = Depends(get_tenant_session),
-) -> dict[str, Any]:
-    row = session.get(ApiKey, key_id)
-    if row is None or row.tenant_id != tenant.tenant_id:
-        raise HTTPException(status_code=404, detail="API key not found")
-    if row.revoked_at is None:
-        row.revoked_at = datetime.now(timezone.utc)
-        session.commit()
-    return sanitize_output_payload(
-        {
-            "id": str(row.id),
-            "revoked": True,
-            "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
-        }
-    )

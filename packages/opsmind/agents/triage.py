@@ -47,12 +47,15 @@ _OPS_KEYWORDS = [
     r"\binventory\b",
     r"\bstockout\b",
     r"\bstock\b",
-    r"\bsku\b",
+    r"\bskus?\b",          # matches both "sku" and "skus"
     r"\bshipment\b",
     r"\bshipping\b",
+    r"\bdelivery\b",
+    r"\bdeliveries\b",
     r"\bcarrier\b",
     r"\bsla\b",
     r"\bdelay\b",
+    r"\blate\b",
     r"\bpromo\b",
     r"\bcampaign\b",
     r"\breturn\b",
@@ -63,6 +66,14 @@ _OPS_KEYWORDS = [
     r"\bwarehouse\b",
     r"\becommerce\b",
     r"\be-commerce\b",
+    r"\bcapacit",           # matches "capacity", "capacities"
+    r"\bavailable\b",
+    r"\bslots?\b",          # matches "slot", "slots"
+    r"\bbacklog\b",
+    r"\bthroughput\b",
+    r"\bengagement\b",
+    r"\bproject\b",
+    r"\bclient\b",
 ]
 
 _VAGUE_PATTERNS = [
@@ -101,7 +112,7 @@ def classify_question(question: str) -> tuple[Route, str]:
             )
 
     ops_hits = sum(1 for pat in _OPS_KEYWORDS if re.search(pat, lower))
-    if ops_hits == 0 and len(lower.split()) <= 8:
+    if ops_hits == 0 and len(lower.split()) <= 12:
         return (
             "needs_clarification",
             "No clear operations signal; clarify what metric or process to investigate.",

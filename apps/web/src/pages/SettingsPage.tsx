@@ -1,58 +1,61 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
+  Check,
   Copy,
   Database,
-  KeyRound,
   Settings2,
   Ticket,
   Trash2,
   Upload,
+  UserCheck,
+  UserX,
+  Users,
+  X,
 } from "lucide-react";
 import { PageHeader } from "../components/common/PageHeader";
 import { Button } from "../components/common/Button";
 import { Badge } from "../components/common/Badge";
 import {
+  AccessRequest,
+  AccessUser,
   api,
-  ApiKeyItem,
   AuthUser,
   DataReadyStatus,
   IngestJobItem,
   InviteItem,
   PlaybookItem,
-  WarehouseConnection,
   getStoredUser,
   setStoredUser,
 } from "../lib/api";
 
+type AccessTab = "pending" | "active" | "revoked";
+
 export function SettingsPage() {
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [invites, setInvites] = useState<InviteItem[]>([]);
-  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
   const [playbooks, setPlaybooks] = useState<PlaybookItem[]>([]);
   const [jobs, setJobs] = useState<IngestJobItem[]>([]);
   const [ready, setReady] = useState<DataReadyStatus | null>(null);
-  const [warehouse, setWarehouse] = useState<WarehouseConnection | null>(null);
-  const [whHost, setWhHost] = useState("db");
-  const [whPort, setWhPort] = useState("5432");
-  const [whDatabase, setWhDatabase] = useState("opsmind");
-  const [whUser, setWhUser] = useState("opsmind_readonly");
-  const [whPassword, setWhPassword] = useState("");
-  const [whSchema, setWhSchema] = useState("public");
-  const [whBusy, setWhBusy] = useState(false);
-  const [whNotice, setWhNotice] = useState<string | null>(null);
   const [freshCode, setFreshCode] = useState<string | null>(null);
-  const [freshApiKey, setFreshApiKey] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [creatingKey, setCreatingKey] = useState(false);
   const [savingCompany, setSavingCompany] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [csvUploading, setCsvUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+
+  // Access management state
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
+  const [accessUsers, setAccessUsers] = useState<AccessUser[]>([]);
+  const [accessTab, setAccessTab] = useState<AccessTab>("pending");
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [accessActionLoading, setAccessActionLoading] = useState<string | null>(null);
+  const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -64,27 +67,23 @@ export function SettingsPage() {
       setUser(me.user);
       setStoredUser(me.user);
       setCompanyName(me.user.tenant.name);
-      const [pb, status, jobList, wh] = await Promise.all([
+      const [pb, status, jobList] = await Promise.all([
         api.listPlaybooks(),
         api.dataReady(),
         api.listIngestJobs(),
-        api.getWarehouse(),
       ]);
       setPlaybooks(pb.playbooks || []);
       setReady(status);
       setJobs(jobList.jobs || []);
-      setWarehouse(wh.connection);
-      if (wh.connection) {
-        setWhHost(wh.connection.host);
-        setWhPort(String(wh.connection.port));
-        setWhDatabase(wh.connection.database);
-        setWhUser(wh.connection.username);
-        setWhSchema(wh.connection.schema_name);
-      }
       if (me.user.role === "admin") {
-        const [inv, keys] = await Promise.all([api.listInvites(), api.listApiKeys()]);
+        const [inv, requests, users] = await Promise.all([
+          api.listInvites(),
+          api.listAccessRequests("all"),
+          api.listAccessUsers("all"),
+        ]);
         setInvites(inv.invites || []);
-        setApiKeys(keys.api_keys || []);
+        setAccessRequests(requests.requests || []);
+        setAccessUsers(users.users || []);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
@@ -95,6 +94,12 @@ export function SettingsPage() {
 
   useEffect(() => {
     void load();
+    // Scroll to #access if anchor is present
+    if (window.location.hash === "#access") {
+      setTimeout(() => {
+        document.getElementById("access-management")?.scrollIntoView({ behavior: "smooth" });
+      }, 400);
+    }
   }, []);
 
   const createInvite = async () => {
@@ -148,99 +153,6 @@ export function SettingsPage() {
     }
   };
 
-  const createKey = async () => {
-    setCreatingKey(true);
-    setError(null);
-    setFreshApiKey(null);
-    try {
-      const res = await api.createApiKey({ name: "console" });
-      setFreshApiKey(res.api_key.key);
-      await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create API key");
-    } finally {
-      setCreatingKey(false);
-    }
-  };
-
-  const revokeKey = async (id: string) => {
-    setError(null);
-    try {
-      await api.revokeApiKey(id);
-      await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to revoke API key");
-    }
-  };
-
-  const copyApiKey = async () => {
-    if (!freshApiKey) return;
-    await navigator.clipboard.writeText(freshApiKey);
-  };
-
-  const saveWarehouse = async () => {
-    setWhBusy(true);
-    setError(null);
-    setWhNotice(null);
-    try {
-      await api.saveWarehouse({
-        host: whHost.trim(),
-        port: Number(whPort) || 5432,
-        database: whDatabase.trim(),
-        username: whUser.trim(),
-        password: whPassword,
-        schema_name: whSchema.trim() || "public",
-      });
-      setWhPassword("");
-      setWhNotice("Warehouse connection verified and saved.");
-      await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to save warehouse");
-    } finally {
-      setWhBusy(false);
-    }
-  };
-
-  const testWarehouse = async () => {
-    setWhBusy(true);
-    setError(null);
-    setWhNotice(null);
-    try {
-      const res = await api.testWarehouse({
-        host: whHost.trim(),
-        port: Number(whPort) || 5432,
-        database: whDatabase.trim(),
-        username: whUser.trim(),
-        password: whPassword,
-        schema_name: whSchema.trim() || "public",
-      });
-      if (!res.ok) {
-        setError(res.error || `Missing tables: ${(res.missing_tables || []).join(", ")}`);
-      } else {
-        setWhNotice("Connection OK — allowlisted tables found.");
-      }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Warehouse test failed");
-    } finally {
-      setWhBusy(false);
-    }
-  };
-
-  const removeWarehouse = async () => {
-    setWhBusy(true);
-    setError(null);
-    try {
-      await api.deleteWarehouse();
-      setWarehouse(null);
-      setWhPassword("");
-      await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete warehouse");
-    } finally {
-      setWhBusy(false);
-    }
-  };
-
   const onPickFile = async (file: File | null) => {
     if (!file) return;
     setUploading(true);
@@ -281,22 +193,65 @@ export function SettingsPage() {
     }
   };
 
+  // ── Access management actions ──────────────────────────────────────────────
+
+  const approveRequest = async (id: string) => {
+    setAccessActionLoading(id);
+    setError(null);
+    try {
+      await api.approveAccessRequest(id);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to approve request");
+    } finally {
+      setAccessActionLoading(null);
+    }
+  };
+
+  const rejectRequest = async (id: string) => {
+    setAccessActionLoading(id);
+    setError(null);
+    try {
+      await api.rejectAccessRequest(id, rejectReason.trim() || undefined);
+      setRejectingId(null);
+      setRejectReason("");
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to reject request");
+    } finally {
+      setAccessActionLoading(null);
+    }
+  };
+
+  const revokeUser = async (userId: string) => {
+    setAccessActionLoading(userId);
+    setError(null);
+    try {
+      await api.revokeUserAccess(userId);
+      setRevokeConfirmId(null);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to revoke access");
+    } finally {
+      setAccessActionLoading(null);
+    }
+  };
+
+  const pendingRequests = accessRequests.filter((r) => r.status === "pending");
+  const activeUsers = accessUsers.filter((u) => u.status === "active" && u.email !== user?.email);
+  const revokedUsers = accessUsers.filter((u) => u.status === "revoked");
+
   return (
     <div className="space-y-5 animate-fadeIn">
       <PageHeader
         icon={<Settings2 className="w-5 h-5" />}
         title="Settings"
-        description="Company data, playbooks, and invite codes for teammates."
+        description="Company data, playbooks, and access management for teammates."
       />
 
       {error ? (
         <div className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-xl px-3 py-2">
           {error}
-        </div>
-      ) : null}
-      {whNotice ? (
-        <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/50 rounded-xl px-3 py-2">
-          {whNotice}
         </div>
       ) : null}
 
@@ -360,8 +315,8 @@ export function SettingsPage() {
             <div>
               <h3 className="font-app-heading text-base text-white">Business data</h3>
               <p className="text-xs text-surface-400 mt-1">
-                Upload a ZIP with products.csv, orders.csv, and order_items.csv. Investigations
-                stay locked until this tenant has its own data.
+                Primary setup for most companies: upload a ZIP with products.csv, orders.csv,
+                and order_items.csv. Investigations stay locked until this company has data.
               </p>
             </div>
             {isAdmin ? (
@@ -400,7 +355,6 @@ export function SettingsPage() {
               <span className="text-xs text-surface-400">
                 products {ready?.products ?? 0} · orders {ready?.orders ?? 0} · metrics{" "}
                 {ready?.daily_metrics ?? 0}
-                {ready?.warehouse_ready ? " · warehouse verified" : ""}
               </span>
             </div>
 
@@ -420,17 +374,11 @@ export function SettingsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm text-surface-100 truncate">{job.filename}</span>
                         {job.status === "done" ? (
-                          <Badge variant="success" size="xs">
-                            done
-                          </Badge>
+                          <Badge variant="success" size="xs">done</Badge>
                         ) : job.status === "failed" ? (
-                          <Badge variant="error" size="xs">
-                            failed
-                          </Badge>
+                          <Badge variant="error" size="xs">failed</Badge>
                         ) : (
-                          <Badge variant="default" size="xs">
-                            {job.status}
-                          </Badge>
+                          <Badge variant="default" size="xs">{job.status}</Badge>
                         )}
                       </div>
                       <p className="text-xs text-surface-400 mt-1 font-mono">
@@ -448,124 +396,6 @@ export function SettingsPage() {
                 ))}
               </ul>
             )}
-          </div>
-        </section>
-      ) : null}
-
-      {isAdmin ? (
-        <section className="app-section">
-          <div className="app-section-header">
-            <div>
-              <h3 className="font-app-heading text-base text-white">Warehouse connector</h3>
-              <p className="text-xs text-surface-400 mt-1">
-                Read-only Postgres with the OpsMind ecommerce schema. Password is never shown
-                again after save.
-              </p>
-            </div>
-          </div>
-          <div className="app-section-body space-y-3">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              {warehouse?.status === "verified" ? (
-                <Badge variant="success" size="xs">
-                  verified
-                </Badge>
-              ) : warehouse?.status === "failed" ? (
-                <Badge variant="error" size="xs">
-                  failed
-                </Badge>
-              ) : warehouse ? (
-                <Badge variant="default" size="xs">
-                  {warehouse.status}
-                </Badge>
-              ) : (
-                <Badge variant="default" size="xs">
-                  not configured
-                </Badge>
-              )}
-              {warehouse?.last_error ? (
-                <span className="text-xs text-rose-300">{warehouse.last_error}</span>
-              ) : null}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <label className="text-xs text-surface-400">
-                Host
-                <input
-                  className="mt-1 w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                  value={whHost}
-                  onChange={(e) => setWhHost(e.target.value)}
-                />
-              </label>
-              <label className="text-xs text-surface-400">
-                Port
-                <input
-                  className="mt-1 w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                  value={whPort}
-                  onChange={(e) => setWhPort(e.target.value)}
-                />
-              </label>
-              <label className="text-xs text-surface-400">
-                Database
-                <input
-                  className="mt-1 w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                  value={whDatabase}
-                  onChange={(e) => setWhDatabase(e.target.value)}
-                />
-              </label>
-              <label className="text-xs text-surface-400">
-                Schema
-                <input
-                  className="mt-1 w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                  value={whSchema}
-                  onChange={(e) => setWhSchema(e.target.value)}
-                />
-              </label>
-              <label className="text-xs text-surface-400">
-                Username
-                <input
-                  className="mt-1 w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                  value={whUser}
-                  onChange={(e) => setWhUser(e.target.value)}
-                />
-              </label>
-              <label className="text-xs text-surface-400">
-                Password
-                <input
-                  type="password"
-                  className="mt-1 w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                  value={whPassword}
-                  onChange={(e) => setWhPassword(e.target.value)}
-                  placeholder={warehouse ? "••••••••" : ""}
-                />
-              </label>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={whBusy}
-                onClick={() => void testWarehouse()}
-              >
-                Test connection
-              </Button>
-              <Button
-                variant="accent"
-                size="sm"
-                loading={whBusy}
-                onClick={() => void saveWarehouse()}
-              >
-                Save & verify
-              </Button>
-              {warehouse ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={whBusy}
-                  onClick={() => void removeWarehouse()}
-                >
-                  Disconnect
-                </Button>
-              ) : null}
-            </div>
           </div>
         </section>
       ) : null}
@@ -649,93 +479,9 @@ export function SettingsPage() {
         <section className="app-section">
           <div className="app-section-header flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="font-app-heading text-base text-white">API keys</h3>
-              <p className="text-xs text-surface-400 mt-1">
-                Per-tenant keys for scripts and integrations. Prefer JWT for the web console.
-              </p>
-            </div>
-            <Button
-              variant="accent"
-              size="sm"
-              icon={<KeyRound className="w-3.5 h-3.5" />}
-              loading={creatingKey}
-              onClick={() => void createKey()}
-            >
-              Create API key
-            </Button>
-          </div>
-          <div className="app-section-body space-y-3">
-            {freshApiKey ? (
-              <div className="rounded-xl border border-accent-700/40 bg-accent-950/30 px-3 py-3 flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
-                <div className="min-w-0">
-                  <p className="text-xs text-accent-300 mb-1">Copy now — shown once</p>
-                  <code className="font-mono text-xs sm:text-sm text-white break-all">
-                    {freshApiKey}
-                  </code>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<Copy className="w-3.5 h-3.5" />}
-                  onClick={() => void copyApiKey()}
-                >
-                  Copy
-                </Button>
-              </div>
-            ) : null}
-
-            {apiKeys.length === 0 ? (
-              <p className="app-empty text-sm">No API keys yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {apiKeys.map((k) => (
-                  <li
-                    key={k.id}
-                    className="app-list-card flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm text-surface-100">{k.name}</span>
-                        <code className="font-mono text-xs text-surface-400">{k.key_prefix}</code>
-                        {k.active ? (
-                          <Badge variant="success" size="xs">
-                            active
-                          </Badge>
-                        ) : (
-                          <Badge variant="error" size="xs">
-                            revoked
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-surface-400 mt-1">
-                        {k.created_at ? new Date(k.created_at).toLocaleString() : ""}
-                      </p>
-                    </div>
-                    {k.revoked_at == null ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        icon={<Trash2 className="w-3.5 h-3.5" />}
-                        onClick={() => void revokeKey(k.id)}
-                      >
-                        Revoke
-                      </Button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {isAdmin ? (
-        <section className="app-section">
-          <div className="app-section-header flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
               <h3 className="font-app-heading text-base text-white">Invite codes</h3>
               <p className="text-xs text-surface-400 mt-1">
-                Investigators redeem a code to join this tenant only.
+                Investigators redeem a code to submit an access request for this tenant.
               </p>
             </div>
             <Button
@@ -781,13 +527,9 @@ export function SettingsPage() {
                           {inv.code_prefix}
                         </code>
                         {inv.active ? (
-                          <Badge variant="success" size="xs">
-                            active
-                          </Badge>
+                          <Badge variant="success" size="xs">active</Badge>
                         ) : (
-                          <Badge variant="error" size="xs">
-                            inactive
-                          </Badge>
+                          <Badge variant="error" size="xs">inactive</Badge>
                         )}
                       </div>
                       <p className="text-xs text-surface-400 mt-1">
@@ -810,6 +552,250 @@ export function SettingsPage() {
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Access Management (admin only) ──────────────────────────────────── */}
+      {isAdmin ? (
+        <section className="app-section" id="access-management">
+          <div className="app-section-header">
+            <div>
+              <h3 className="font-app-heading text-base text-white flex items-center gap-2">
+                <Users className="w-4 h-4 text-accent-400" />
+                Access Management
+              </h3>
+              <p className="text-xs text-surface-400 mt-1">
+                Review access requests and manage workspace members.
+              </p>
+            </div>
+          </div>
+
+          {/* Tab pills */}
+          <div className="px-4 pt-3 flex gap-2 flex-wrap">
+            {(["pending", "active", "revoked"] as AccessTab[]).map((tab) => {
+              const count =
+                tab === "pending"
+                  ? pendingRequests.length
+                  : tab === "active"
+                    ? activeUsers.length
+                    : revokedUsers.length;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setAccessTab(tab)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    accessTab === tab
+                      ? "bg-accent-500 text-surface-950"
+                      : "bg-surface-900/60 border border-surface-700 text-surface-400 hover:text-surface-100"
+                  }`}
+                >
+                  {tab === "pending" ? "Pending requests" : tab === "active" ? "Active users" : "Revoked"}
+                  {count > 0 && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold tabular-nums ${
+                        accessTab === tab
+                          ? "bg-surface-950/30 text-surface-950"
+                          : tab === "pending"
+                            ? "bg-rose-900/60 text-rose-300"
+                            : "bg-surface-800 text-surface-400"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="app-section-body space-y-3">
+            {/* Pending requests */}
+            {accessTab === "pending" && (
+              <>
+                {pendingRequests.length === 0 ? (
+                  <p className="app-empty text-sm">No pending access requests.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {pendingRequests.map((req) => (
+                      <li key={req.id} className="app-list-card space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm text-surface-100 font-medium">
+                                {req.requester_email}
+                              </span>
+                              <Badge variant="default" size="xs">pending</Badge>
+                              {req.invite_code_prefix && (
+                                <code className="text-[10px] font-mono text-surface-500">
+                                  via {req.invite_code_prefix}
+                                </code>
+                              )}
+                            </div>
+                            <p className="text-xs text-surface-500 mt-0.5">
+                              Requested {new Date(req.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button
+                              variant="accent"
+                              size="sm"
+                              icon={<Check className="w-3.5 h-3.5" />}
+                              loading={accessActionLoading === req.id}
+                              onClick={() => void approveRequest(req.id)}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<X className="w-3.5 h-3.5 text-rose-400" />}
+                              onClick={() => {
+                                setRejectingId(req.id);
+                                setRejectReason("");
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        </div>
+                        {/* Inline rejection form */}
+                        {rejectingId === req.id && (
+                          <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-surface-800">
+                            <input
+                              type="text"
+                              value={rejectReason}
+                              onChange={(e) => setRejectReason(e.target.value)}
+                              placeholder="Optional reason…"
+                              className="flex-1 min-h-9 rounded-lg bg-surface-950 border border-surface-700 px-3 text-xs text-surface-100 focus:outline-none focus:ring-1 focus:ring-rose-500/40"
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-rose-400 hover:text-rose-300 border border-rose-800/60"
+                                loading={accessActionLoading === req.id}
+                                onClick={() => void rejectRequest(req.id)}
+                              >
+                                Confirm reject
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setRejectingId(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+
+            {/* Active users */}
+            {accessTab === "active" && (
+              <>
+                {activeUsers.length === 0 ? (
+                  <p className="app-empty text-sm">No active users yet. Approve an access request to add members.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {activeUsers.map((u) => (
+                      <li
+                        key={u.id}
+                        className="app-list-card flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm text-surface-100">{u.email}</span>
+                            <Badge
+                              variant={u.role === "admin" ? "success" : "default"}
+                              size="xs"
+                            >
+                              {u.role}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-surface-500 mt-0.5">
+                            Joined {new Date(u.created_at).toLocaleDateString()}
+                            {u.approved_by_email
+                              ? ` · approved by ${u.approved_by_email}`
+                              : ""}
+                          </p>
+                        </div>
+                        {u.role !== "admin" && (
+                          <>
+                            {revokeConfirmId === u.id ? (
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-xs text-surface-400">Revoke access?</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-rose-400 hover:text-rose-300 border border-rose-800/60"
+                                  loading={accessActionLoading === u.id}
+                                  onClick={() => void revokeUser(u.id)}
+                                >
+                                  Yes, revoke
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setRevokeConfirmId(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                icon={<UserX className="w-3.5 h-3.5 text-rose-400" />}
+                                onClick={() => setRevokeConfirmId(u.id)}
+                              >
+                                Revoke
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+
+            {/* Revoked users */}
+            {accessTab === "revoked" && (
+              <>
+                {revokedUsers.length === 0 ? (
+                  <p className="app-empty text-sm">No revoked users.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {revokedUsers.map((u) => (
+                      <li
+                        key={u.id}
+                        className="app-list-card flex flex-col sm:flex-row sm:items-center justify-between gap-2 opacity-70"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm text-surface-300 line-through">{u.email}</span>
+                            <Badge variant="error" size="xs">revoked</Badge>
+                            <Badge variant="default" size="xs">{u.role}</Badge>
+                          </div>
+                          <p className="text-xs text-surface-500 mt-0.5">
+                            Revoked {u.revoked_at ? new Date(u.revoked_at).toLocaleString() : "—"}
+                          </p>
+                        </div>
+                        <UserCheck className="w-4 h-4 text-surface-600 shrink-0" />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         </section>

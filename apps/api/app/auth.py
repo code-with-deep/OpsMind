@@ -44,6 +44,17 @@ def resolve_tenant_from_api_key(session: Session, raw_key: str) -> TenantContext
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Tenant is not active",
             )
+        # Check if the key is associated with a user and that user is active
+        if api_key.created_by is not None:
+            from opsmind.db.tenant_models import User as UserModel  # local import to avoid circular
+            owner = session.scalar(
+                select(UserModel).where(UserModel.email == api_key.created_by)
+            )
+            if owner is not None and owner.status != "active":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Account access has been revoked.",
+                )
         return TenantContext(
             tenant_id=tenant.id,
             tenant_slug=tenant.slug,
@@ -123,6 +134,11 @@ def resolve_tenant_from_jwt(session: Session, token: str) -> TenantContext:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant is not active",
+        )
+    if user.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account access has been revoked.",
         )
     return TenantContext(
         tenant_id=tenant.id,

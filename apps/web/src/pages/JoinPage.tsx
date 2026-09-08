@@ -1,9 +1,20 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { CheckCircle2, Clock, Loader2, XCircle } from "lucide-react";
 import { AuthLayout } from "../layouts/AuthLayout";
 import { Button } from "../components/common/Button";
-import { api } from "../lib/api";
+import { api, setAccessToken, setStoredUser } from "../lib/api";
 import { routes } from "../lib/routes";
+
+type JoinState =
+  | { phase: "form" }
+  // password kept in memory so we can auto-login when approved
+  | { phase: "pending"; email: string; password: string; invite_code: string; request_id: string }
+  | { phase: "signing_in" }
+  | { phase: "approved" }
+  | { phase: "rejected"; reason: string | null };
+
+const POLL_INTERVAL_MS = 10_000;
 
 export function JoinPage() {
   const navigate = useNavigate();
@@ -13,29 +24,158 @@ export function JoinPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [state, setState] = useState<JoinState>({ phase: "form" });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Kick off polling when we enter the pending phase
+  useEffect(() => {
+    if (state.phase !== "pending") {
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+
+    const { email: pendingEmail, invite_code, password: pendingPassword } = state;
+
+    const poll = async () => {
+      try {
+        const res = await api.checkRequestStatus(pendingEmail, invite_code);
+        if (res.status === "approved") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          // Auto-login with the credentials the user already provided
+          setState({ phase: "signing_in" });
+          try {
+            const authRes = await api.login({ email: pendingEmail, password: pendingPassword });
+            // Persist JWT + user profile exactly as LoginPage does
+            setAccessToken(authRes.access_token);
+            setStoredUser(authRes.user);
+            setState({ phase: "approved" });
+            // Brief success flash then go straight to console
+            setTimeout(() => navigate(routes.console, { replace: true }), 1200);
+          } catch {
+            // Auto-login failed (edge case: password changed or network blip)
+            // Fall back to login page with a clear success notice
+            setState({ phase: "approved" });
+            setTimeout(() => navigate(routes.login + "?notice=access_approved", { replace: true }), 1200);
+          }
+        } else if (res.status === "rejected") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setState({ phase: "rejected", reason: res.rejection_reason ?? null });
+        }
+      } catch {
+        // Silently swallow transient polling errors — UI stays in pending
+      }
+    };
+
+    // Poll immediately, then on interval
+    void poll();
+    pollRef.current = setInterval(() => void poll(), POLL_INTERVAL_MS);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [state, navigate]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      await api.joinInvite({
+      const res = await api.joinInvite({
         invite_code: inviteCode,
         email,
         password,
       });
-      navigate(routes.console);
+      // Store password in pending state so we can auto-login after approval
+      setState({ phase: "pending", email, password, invite_code: inviteCode, request_id: res.request_id });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not join with invite");
+      setError(err instanceof Error ? err.message : "Could not submit access request");
     } finally {
       setLoading(false);
     }
   };
 
+  if (state.phase === "signing_in" || state.phase === "approved") {
+    return (
+      <AuthLayout
+        title="Access approved!"
+        subtitle="Signing you in to your workspace…"
+      >
+        <div className="flex flex-col items-center gap-4 py-6 text-center">
+          {state.phase === "signing_in" ? (
+            <Loader2 className="w-12 h-12 text-accent-400 animate-spin" />
+          ) : (
+            <CheckCircle2 className="w-12 h-12 text-accent-400" />
+          )}
+          <p className="text-sm text-surface-300">
+            {state.phase === "signing_in" ? "Completing sign-in…" : "Redirecting to console…"}
+          </p>
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  if (state.phase === "rejected") {
+    return (
+      <AuthLayout
+        title="Access request rejected"
+        subtitle="Your request was not approved by the workspace admin."
+      >
+        <div className="flex flex-col items-center gap-4 py-6 text-center">
+          <XCircle className="w-12 h-12 text-rose-400" />
+          {state.reason ? (
+            <p className="text-sm text-surface-300">
+              Reason: <span className="text-surface-100">{state.reason}</span>
+            </p>
+          ) : (
+            <p className="text-sm text-surface-400">No reason was provided by the admin.</p>
+          )}
+          <p className="text-xs text-surface-500">
+            You can try again with a new invite code, or contact your workspace admin.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setState({ phase: "form" })}
+          >
+            Try again
+          </Button>
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  if (state.phase === "pending") {
+    return (
+      <AuthLayout
+        title="Request submitted"
+        subtitle="An admin will review your access request shortly."
+      >
+        <div className="flex flex-col items-center gap-4 py-6 text-center">
+          <Clock className="w-12 h-12 text-accent-400 animate-pulse" />
+          <div className="space-y-1">
+            <p className="text-sm text-surface-100 font-medium">Waiting for admin approval</p>
+            <p className="text-xs text-surface-400">
+              This page checks automatically every 10 seconds.
+            </p>
+            <p className="text-xs text-surface-500 mt-2">
+              Submitted as <span className="text-surface-300 font-mono">{state.email}</span>
+            </p>
+          </div>
+          <div className="flex gap-2 pt-2">
+            <div className="w-2 h-2 rounded-full bg-accent-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+            <div className="w-2 h-2 rounded-full bg-accent-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+            <div className="w-2 h-2 rounded-full bg-accent-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+          </div>
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  // Default: form phase
   return (
     <AuthLayout
       title="Join with invite"
-      subtitle="Redeem an invite code to join as Investigator for that company only."
+      subtitle="Submit an access request. An admin will review and approve you shortly."
       footer={
         <p>
           Starting a new company?{" "}
@@ -45,7 +185,7 @@ export function JoinPage() {
         </p>
       }
     >
-      <form className="space-y-3.5" onSubmit={onSubmit}>
+      <form className="space-y-3.5" onSubmit={(e) => void onSubmit(e)}>
         <label className="block space-y-1.5">
           <span className="text-xs font-medium text-surface-300">Invite code</span>
           <input
@@ -86,7 +226,7 @@ export function JoinPage() {
           </p>
         ) : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
-          Join company
+          Request access
         </Button>
       </form>
     </AuthLayout>

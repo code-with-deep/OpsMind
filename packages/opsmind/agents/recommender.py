@@ -97,7 +97,10 @@ def _llm_recommendation(
         "Never invent source_ids. Label assumptions explicitly. "
         "HARD RULES: Copy revenue dollars, cancel counts, carrier names, and SKUs ONLY from "
         "findings rows. Do not use demo placeholders (SKU-1001, FastShip) unless present in findings. "
-        "Summary must include exact SQL week revenue totals when present."
+        "Summary must include exact SQL week revenue totals when present. "
+        "Findings with kind='case_memory' are prior approved investigations — use them as "
+        "historical context (e.g. 'similar pattern seen in prior case') but never cite "
+        "their numbers as current-period facts. Always ground actions in current SQL evidence."
     )
     user = json.dumps(
         {

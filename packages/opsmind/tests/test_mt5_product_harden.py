@@ -66,7 +66,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.skipif(not _mt5_ready(), reason="MT4+ schema required")
-def test_mt5_full_path_two_tenants_and_api_keys() -> None:
+def test_mt5_full_path_two_tenants() -> None:
     client = TestClient(create_app())
     suffix = uuid.uuid4().hex[:8]
 
@@ -108,27 +108,6 @@ def test_mt5_full_path_two_tenants_and_api_keys() -> None:
     assert join.status_code == 200, join.text
     assert join.json()["user"]["tenant"]["id"] == acme_tenant
     assert join.json()["user"]["role"] == "investigator"
-
-    # --- API key create / auth / revoke ---
-    key_resp = client.post(
-        "/auth/api-keys",
-        headers=headers,
-        json={"name": "ci"},
-    )
-    assert key_resp.status_code == 200, key_resp.text
-    raw_key = key_resp.json()["api_key"]["key"]
-    key_id = key_resp.json()["api_key"]["id"]
-    assert raw_key.startswith("omk_")
-
-    me_via_key = client.get("/auth/me", headers={"X-API-Key": raw_key})
-    # /auth/me requires user session — use ready endpoint with API key instead
-    ready_via_key = client.get("/data/ready", headers={"X-API-Key": raw_key})
-    assert ready_via_key.status_code == 200
-
-    revoke = client.post(f"/auth/api-keys/{key_id}/revoke", headers=headers)
-    assert revoke.status_code == 200
-    denied = client.get("/data/ready", headers={"X-API-Key": raw_key})
-    assert denied.status_code == 401
 
     # --- CSV + playbook ---
     up = client.post(

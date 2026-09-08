@@ -187,7 +187,7 @@ def _sync_id_sequences(session: Session) -> None:
 
 
 def tenant_data_ready(session: Session, tenant_id: UUID) -> dict[str, Any]:
-    """Ready-gate: CSV data in OpsMind tables OR a verified warehouse connector."""
+    """Ready-gate: CSV data in OpsMind tables."""
     products = session.scalar(
         select(func.count()).select_from(Product).where(Product.tenant_id == tenant_id)
     ) or 0
@@ -197,19 +197,12 @@ def tenant_data_ready(session: Session, tenant_id: UUID) -> dict[str, Any]:
     metrics = session.scalar(
         select(func.count()).select_from(DailyMetric).where(DailyMetric.tenant_id == tenant_id)
     ) or 0
-    csv_ready = int(products) > 0 and int(orders) > 0 and int(metrics) > 0
-
-    from opsmind.db.warehouse import warehouse_verified
-
-    wh_ready = warehouse_verified(session, tenant_id)
-    ready = csv_ready or wh_ready
+    ready = int(products) > 0 and int(orders) > 0 and int(metrics) > 0
     return {
         "ready": ready,
         "products": int(products),
         "orders": int(orders),
         "daily_metrics": int(metrics),
-        "csv_ready": csv_ready,
-        "warehouse_ready": wh_ready,
     }
 
 

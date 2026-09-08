@@ -37,6 +37,15 @@ desktop.ini
 postgres_data/
 *.log
 
+# Tenant uploaded data — never commit real business data
+data/uploads/
+
+# Sample / test CSV templates — local dev fixtures only
+data/csv_templates/
+
+# Scratch / generated agent notes
+agent.md
+
 # Jupyter
 .ipynb_checkpoints/
 

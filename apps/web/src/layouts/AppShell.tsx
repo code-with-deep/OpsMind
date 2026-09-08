@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   InvestigationDetail,
   InvestigationSummaryItem,
@@ -10,7 +10,7 @@ import { Header } from "../components/layout/Header";
 import { AuditDrawer } from "../components/investigation/AuditDrawer";
 import { NewInvestigationModal } from "../components/investigation/NewInvestigationModal";
 import { parseConsoleSubView, routes } from "../lib/routes";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ArrowRight } from "lucide-react";
 
 export interface AppShellOutletContext {
   investigations: InvestigationSummaryItem[];
@@ -38,6 +38,45 @@ type LaunchLocationState = {
   launchQuestion?: string;
 };
 
+type AppNotice = {
+  title: string;
+  body: string;
+  actionTo?: string;
+  actionLabel?: string;
+};
+
+function toAppNotice(raw: string): AppNotice {
+  const text = (raw || "").trim();
+  const lower = text.toLowerCase();
+
+  if (
+    lower.includes("tenant_data_not_ready") ||
+    lower.includes("upload company csv") ||
+    (lower.includes("products.csv") && lower.includes("orders.csv"))
+  ) {
+    return {
+      title: "Business data required",
+      body: "Upload a company data ZIP in Settings before running investigations. Include at least products.csv, orders.csv, and order_items.csv. A playbook (.md) is recommended for SOP-backed answers.",
+      actionTo: routes.settings,
+      actionLabel: "Go to Settings",
+    };
+  }
+
+  if (lower.includes("unauthorized") || lower.includes("401")) {
+    return {
+      title: "Sign in required",
+      body: "Your session expired or is missing. Sign in again to continue.",
+      actionTo: routes.login,
+      actionLabel: "Sign in",
+    };
+  }
+
+  return {
+    title: "Something went wrong",
+    body: text || "An unexpected error occurred. Try again or check Settings.",
+  };
+}
+
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -55,6 +94,7 @@ export function AppShell() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const notice = globalError ? toAppNotice(globalError) : null;
 
   const activeSubView = parseConsoleSubView(subView);
   const approvedCount = investigations.filter((i) => i.is_approved).length;
@@ -208,25 +248,37 @@ export function AppShell() {
         onNewInvestigationClick={() => setIsNewModalOpen(true)}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        {globalError && (
-          <div className="mb-4 sm:mb-6 p-3.5 sm:p-4 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-200 text-xs flex items-start justify-between gap-3 shadow-lg animate-slide-up">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-semibold text-rose-100 block mb-0.5">
-                  Execution / Guardrail Notice
-                </span>
-                <span className="leading-relaxed">{globalError}</span>
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-[max(1rem,env(safe-area-inset-bottom))] min-w-0">
+        {notice && (
+          <div className="mb-4 sm:mb-6 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-100 shadow-lg animate-slide-up overflow-hidden">
+            <div className="p-3.5 sm:p-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="min-w-0 space-y-1.5">
+                  <p className="font-semibold text-sm text-rose-50">{notice.title}</p>
+                  <p className="text-xs leading-relaxed text-rose-200/95 break-words">
+                    {notice.body}
+                  </p>
+                  {notice.actionTo && notice.actionLabel ? (
+                    <Link
+                      to={notice.actionTo}
+                      onClick={() => setGlobalError(null)}
+                      className="inline-flex items-center gap-1.5 mt-1 text-xs font-medium text-accent-300 hover:text-accent-200 underline-offset-2 hover:underline"
+                    >
+                      {notice.actionLabel}
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  ) : null}
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setGlobalError(null)}
+                className="self-end sm:self-start text-rose-400 hover:text-rose-200 text-xs font-medium shrink-0 px-2 py-1 rounded-md hover:bg-rose-900/40"
+              >
+                Dismiss
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setGlobalError(null)}
-              className="text-rose-400 hover:text-rose-200 text-xs font-mono shrink-0"
-            >
-              Dismiss
-            </button>
           </div>
         )}
 

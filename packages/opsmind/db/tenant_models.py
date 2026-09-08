@@ -1,4 +1,4 @@
-"""Multi-tenant control-plane models (MT1)."""
+"""Multi-tenant control-plane models (MT1 + MT2 + access requests / notifications)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,9 +31,7 @@ class Tenant(Base):
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="tenant")
     invite_codes: Mapped[list[InviteCode]] = relationship(back_populates="tenant")
     ingest_jobs: Mapped[list[IngestJob]] = relationship(back_populates="tenant")
-    warehouse_connection: Mapped[Optional[WarehouseConnection]] = relationship(
-        back_populates="tenant", uselist=False
-    )
+    access_requests: Mapped[list[AccessRequest]] = relationship(back_populates="tenant")
     settings: Mapped[Optional[TenantSettings]] = relationship(
         back_populates="tenant", uselist=False
     )
@@ -51,6 +49,14 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="admin")
+    # MT access-request system: status ∈ {'active', 'revoked'}
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -134,6 +140,7 @@ class InviteCode(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="invite_codes")
+    access_requests: Mapped[list[AccessRequest]] = relationship(back_populates="invite_code")
 
 
 class IngestJob(Base):
@@ -165,40 +172,71 @@ class IngestJob(Base):
     tenant: Mapped[Tenant] = relationship(back_populates="ingest_jobs")
 
 
-class WarehouseConnection(Base):
-    """Read-only external Postgres warehouse connector (MT6). One per tenant."""
+class AccessRequest(Base):
+    """Invitation-based access request — created when a user redeems an invite code.
 
-    __tablename__ = "warehouse_connections"
+    The request stays 'pending' until an Admin approves or rejects it.
+    On approval, a real User record is created and user_id is set here.
+    """
+
+    __tablename__ = "access_requests"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, unique=True, index=True
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
-    dialect: Mapped[str] = mapped_column(String(32), nullable=False, default="postgresql")
-    host: Mapped[str] = mapped_column(String(255), nullable=False)
-    port: Mapped[int] = mapped_column(nullable=False, default=5432)
-    database: Mapped[str] = mapped_column(String(128), nullable=False)
-    username: Mapped[str] = mapped_column(String(128), nullable=False)
-    dsn_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
-    schema_name: Mapped[str] = mapped_column(String(64), nullable=False, default="public")
+    invite_code_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("invite_codes.id"), nullable=False
+    )
+    requester_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Stored password_hash — only used when Admin approves
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # status ∈ {'pending', 'approved', 'rejected'}
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
-    last_verified_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    rejection_reason: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # Set to the new User.id on approval
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
 
-    tenant: Mapped[Tenant] = relationship(back_populates="warehouse_connection")
+    tenant: Mapped[Tenant] = relationship(back_populates="access_requests")
+    invite_code: Mapped[InviteCode] = relationship(back_populates="access_requests")
+
+
+class Notification(Base):
+    """In-app notification for a specific user within a tenant."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    recipient_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    # type examples: 'access_request_submitted', 'access_approved', 'access_rejected', 'access_revoked'
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    related_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    related_entity_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

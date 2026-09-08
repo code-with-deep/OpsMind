@@ -28,8 +28,6 @@ from opsmind.tools.sql_templates import (
 
 _READONLY_ENGINE: Engine | None = None
 _READONLY_SESSION: sessionmaker[Session] | None = None
-_TENANT_ENGINES: dict[str, Engine] = {}
-_TENANT_SESSIONS: dict[str, sessionmaker[Session]] = {}
 
 
 class SqlToolError(ValueError):
@@ -94,39 +92,12 @@ def get_readonly_session_factory(database_url_readonly: str) -> sessionmaker[Ses
     return _READONLY_SESSION
 
 
-def _session_factory_for_url(url: str, *, cache_key: str) -> sessionmaker[Session]:
-    sync_url = url.replace("postgresql+asyncpg://", "postgresql://")
-    if cache_key == "__shared__":
-        return get_readonly_session_factory(sync_url)
-    if cache_key not in _TENANT_SESSIONS:
-        engine = create_engine(sync_url, pool_pre_ping=True, pool_size=2, max_overflow=2)
-        _TENANT_ENGINES[cache_key] = engine
-        _TENANT_SESSIONS[cache_key] = sessionmaker(engine, expire_on_commit=False)
-    return _TENANT_SESSIONS[cache_key]
-
-
 def _resolve_factory(
     *,
-    tenant_id: uuid.UUID,
     database_url_readonly: str,
-    owner_session: Session | None,
-) -> tuple[sessionmaker[Session], bool]:
-    """Pick shared OpsMind readonly vs verified warehouse engine."""
-    if owner_session is None:
-        return get_readonly_session_factory(database_url_readonly), False
-    from opsmind.db.warehouse import resolve_sql_target
-
-    try:
-        dsn, external = resolve_sql_target(
-            owner_session,
-            tenant_id=tenant_id,
-            fallback_database_url_readonly=database_url_readonly,
-        )
-    except ValueError as exc:
-        raise SqlToolError(str(exc)) from exc
-    if not external:
-        return get_readonly_session_factory(database_url_readonly), False
-    return _session_factory_for_url(dsn, cache_key=str(tenant_id)), True
+) -> sessionmaker[Session]:
+    """Return the shared read-only session factory (CSV data plane)."""
+    return get_readonly_session_factory(database_url_readonly)
 
 
 def execute_sql_query_readonly(
@@ -134,17 +105,12 @@ def execute_sql_query_readonly(
     params: dict[str, Any],
     database_url_readonly: str,
     tenant_id: uuid.UUID,
-    owner_session: Session | None = None,
 ) -> list[dict[str, Any]]:
     """Execute allowlisted SQL template in read-only mode (without memory persistence)."""
     template = get_template(template_key)
     _assert_template_safe(template)
     bind_params = _validate_params(template, params)
-    factory, external = _resolve_factory(
-        tenant_id=tenant_id,
-        database_url_readonly=database_url_readonly,
-        owner_session=owner_session,
-    )
+    factory = _resolve_factory(database_url_readonly=database_url_readonly)
     from opsmind.db.tenant_session import apply_tenant_session
 
     with factory() as ro_session:
@@ -159,10 +125,6 @@ def dispose_readonly_engine() -> None:
         _READONLY_ENGINE.dispose()
         _READONLY_ENGINE = None
         _READONLY_SESSION = None
-    for engine in list(_TENANT_ENGINES.values()):
-        engine.dispose()
-    _TENANT_ENGINES.clear()
-    _TENANT_SESSIONS.clear()
 
 
 @dataclass
@@ -197,11 +159,7 @@ def run_sql_tool(
     bind_params = _validate_params(template, params)
 
     started = time.perf_counter()
-    factory, external = _resolve_factory(
-        tenant_id=tenant_id,
-        database_url_readonly=database_url_readonly,
-        owner_session=owner_session,
-    )
+    factory = _resolve_factory(database_url_readonly=database_url_readonly)
     from opsmind.db.tenant_session import apply_tenant_session
 
     with factory() as ro_session:

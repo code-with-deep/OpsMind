@@ -52,37 +52,58 @@ export type IngestJobItem = {
   completed_at: string | null;
 };
 
-export type ApiKeyItem = {
-  id: string;
-  name: string;
-  key_prefix: string;
-  created_at: string | null;
-  revoked_at: string | null;
-  active: boolean;
-};
 
 export type DataReadyStatus = {
   ready: boolean;
   products: number;
   orders: number;
   daily_metrics: number;
-  csv_ready?: boolean;
-  warehouse_ready?: boolean;
 };
 
-export type WarehouseConnection = {
+export type AccessRequest = {
   id: string;
-  dialect: string;
-  host: string;
-  port: number;
-  database: string;
-  username: string;
-  schema_name: string;
-  status: string;
-  last_verified_at: string | null;
-  last_error: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+  requester_email: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  reviewed_at: string | null;
+  reviewed_by_email: string | null;
+  rejection_reason: string | null;
+  invite_code_prefix: string | null;
+};
+
+export type AccessUser = {
+  id: string;
+  email: string;
+  role: string;
+  status: 'active' | 'revoked';
+  created_at: string;
+  revoked_at: string | null;
+  invite_date: string | null;
+  approved_at: string | null;
+  approved_by_email: string | null;
+};
+
+export type NotificationItem = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  is_read: boolean;
+  created_at: string;
+  related_entity_id: string | null;
+  related_entity_type: string | null;
+};
+
+export type AccessRequestStatus = {
+  status: 'pending' | 'approved' | 'rejected';
+  message: string;
+  rejection_reason?: string | null;
+};
+
+export type JoinPendingResponse = {
+  status: 'pending';
+  message: string;
+  request_id: string;
 };
 
 export function getApiBaseUrl(): string {
@@ -286,12 +307,16 @@ export const api = {
     invite_code: string;
     email: string;
     password: string;
-  }): Promise<AuthResponse> {
-    const res = await request<AuthResponse>("/auth/join", {
+  }): Promise<JoinPendingResponse> {
+    return request<JoinPendingResponse>("/auth/join", {
       method: "POST",
       body: JSON.stringify(payload),
     }, { auth: false });
-    return persistAuth(res);
+  },
+
+  async checkRequestStatus(email: string, invite_code: string): Promise<AccessRequestStatus> {
+    const params = new URLSearchParams({ email, invite_code });
+    return request<AccessRequestStatus>(`/auth/request-status?${params.toString()}`, {}, { auth: false });
   },
 
   async me(): Promise<{ user: AuthUser }> {
@@ -305,24 +330,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
-  },
-
-  async listApiKeys(): Promise<{ api_keys: ApiKeyItem[]; count: number }> {
-    return request("/auth/api-keys");
-  },
-
-  async createApiKey(payload?: { name?: string }): Promise<{
-    api_key: ApiKeyItem & { key: string };
-    message: string;
-  }> {
-    return request("/auth/api-keys", {
-      method: "POST",
-      body: JSON.stringify(payload || { name: "default" }),
-    });
-  },
-
-  async revokeApiKey(keyId: string): Promise<{ id: string; revoked: boolean }> {
-    return request(`/auth/api-keys/${keyId}/revoke`, { method: "POST" });
   },
 
   async listInvites(): Promise<{ invites: InviteItem[]; count: number }> {
@@ -420,42 +427,6 @@ export const api = {
     return response.json();
   },
 
-  async getWarehouse(): Promise<{ connection: WarehouseConnection | null }> {
-    return request("/warehouse");
-  },
-
-  async testWarehouse(payload: {
-    host: string;
-    port: number;
-    database: string;
-    username: string;
-    password: string;
-    schema_name?: string;
-  }): Promise<{ ok: boolean; missing_tables: string[]; error: string | null }> {
-    return request("/warehouse/test", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  async saveWarehouse(payload: {
-    host: string;
-    port: number;
-    database: string;
-    username: string;
-    password: string;
-    schema_name?: string;
-  }): Promise<{ connection: WarehouseConnection; message: string }> {
-    return request("/warehouse", {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    });
-  },
-
-  async deleteWarehouse(): Promise<{ deleted: boolean }> {
-    return request("/warehouse", { method: "DELETE" });
-  },
-
   async listInvestigations(params?: {
     status?: string;
     limit?: number;
@@ -536,5 +507,53 @@ export const api = {
 
   async getSqlTemplates(): Promise<{ templates: SqlTemplate[] }> {
     return request<{ templates: SqlTemplate[] }>("/tools/sql/templates");
+  },
+
+  // ── Access Management ────────────────────────────────────────────────────
+
+  async listAccessRequests(status?: string): Promise<{ requests: AccessRequest[]; count: number }> {
+    const params = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "?status=all";
+    return request(`/access/requests${params}`);
+  },
+
+  async approveAccessRequest(id: string): Promise<{ status: string }> {
+    return request(`/access/requests/${id}/approve`, { method: "POST" });
+  },
+
+  async rejectAccessRequest(id: string, reason?: string): Promise<{ status: string }> {
+    return request(`/access/requests/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+  },
+
+  async listAccessUsers(status?: string): Promise<{ users: AccessUser[]; count: number }> {
+    const params = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
+    return request(`/access/users${params}`);
+  },
+
+  async revokeUserAccess(userId: string, reason?: string): Promise<{ revoked: boolean }> {
+    return request(`/access/users/${userId}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+  },
+
+  // ── Notifications ────────────────────────────────────────────────────────
+
+  async listNotifications(limit = 20): Promise<{ notifications: NotificationItem[]; count: number }> {
+    return request(`/notifications?limit=${limit}`);
+  },
+
+  async getUnreadCount(): Promise<{ count: number }> {
+    return request("/notifications/unread-count");
+  },
+
+  async markNotificationRead(id: string): Promise<{ read: boolean }> {
+    return request(`/notifications/${id}/read`, { method: "POST" });
+  },
+
+  async markAllNotificationsRead(): Promise<{ marked_read: number }> {
+    return request("/notifications/read-all", { method: "POST" });
   },
 };

@@ -87,9 +87,14 @@ def get_compiled_graph(database_url_sync: str, *, use_postgres_checkpoint: bool 
 
 
 def reset_graph_cache() -> None:
+    """Force graph recompilation on next run (e.g. after adding nodes)."""
     global _checkpointer, _compiled
     _checkpointer = None
     _compiled = None
+
+
+# Reset on module reload so new graph topology is picked up immediately.
+reset_graph_cache()
 
 
 def build_runtime(settings: Any, overrides: dict[str, Any] | None = None) -> dict[str, Any]:

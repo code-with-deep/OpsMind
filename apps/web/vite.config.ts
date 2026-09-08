@@ -38,7 +38,11 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
         },
-        "/warehouse": {
+        "/access": {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
+        "/notifications": {
           target: apiProxyTarget,
           changeOrigin: true,
         },

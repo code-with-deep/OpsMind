@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     auth_invite_default_max_uses: int = 10
     auth_invite_default_ttl_days: int = 14
     auth_max_active_invites: int = 25
-    auth_max_api_keys: int = 10
 
     # MT3 — playbooks / embeddings
     opsmind_embedding_provider: str = "local"
@@ -53,9 +52,6 @@ class Settings(BaseSettings):
     # MT4 — CSV soft limits
     csv_max_upload_mb: int = 10
     csv_max_rows: int = 50000
-
-    # MT6 — Fernet key for warehouse DSN encryption (optional; falls back to JWT_SECRET hash)
-    opsmind_secrets_key: str = ""
 
 
 @lru_cache

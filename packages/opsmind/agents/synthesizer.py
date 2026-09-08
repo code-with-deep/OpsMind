@@ -31,15 +31,32 @@ def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
     for f in findings:
         purpose = (f.get("purpose") or "").lower()
         rows = f.get("rows") or []
+
+        if f.get("kind") == "case_memory":
+            # Prior approved case — surface its drivers as historical context.
+            prior = f.get("prior_case") or {}
+            title = (prior.get("title") or f.get("purpose") or "Prior case").strip()
+            score = float(prior.get("score") or 0.0)
+            drivers.append(
+                f"Historical context (approved case, similarity={score:.2f}): {title}"
+            )
+            for d in (prior.get("drivers") or [])[:3]:
+                d_str = str(d).strip()
+                if d_str:
+                    drivers.append(f"  ↳ {d_str}")
+            continue
+
         if f.get("kind") != "sql":
             # Playbook hits — cite SOP themes without inventing SKUs/carriers.
             claim = ((f.get("evidence") or {}).get("claim") or "").lower()
-            if "stockout" in claim or "replenish" in claim:
-                drivers.append("Playbook guidance available for stockout escalation / replenishment")
+            if "stockout" in claim or "replenish" in claim or "capacity" in claim:
+                drivers.append("Playbook guidance available for stockout / capacity escalation")
             if "carrier" in claim or "sla" in claim or "delay" in claim:
                 drivers.append("Playbook guidance available for carrier delay response")
             if "return" in claim or "defective" in claim:
                 drivers.append("Playbook guidance available for returns / quality quarantine")
+            if "campaign" in claim or "promo" in claim:
+                drivers.append("Playbook guidance available for campaign / promotion management")
             continue
 
         is_week_total = (
@@ -156,7 +173,10 @@ def _llm_hypothesis(
         "findings.rows / findings.hits. Never invent numbers. Never use demo placeholders "
         "(SKU-1001, FastShip, earbuds) unless those exact tokens appear in findings. "
         "If week totals exist in SQL rows, the summary MUST state those exact revenue values. "
-        "Only cite source_ids that appear in the findings."
+        "Only cite source_ids that appear in the findings. "
+        "Findings with kind='case_memory' are prior approved investigations — use them as "
+        "historical context to inform pattern recognition, but do NOT copy their numbers "
+        "as current-period facts. Always prefer current SQL findings over case memory."
     )
     user = (
         f"Question: {question}\n\nFindings JSON:\n{json.dumps(compact, default=str)[:14000]}"

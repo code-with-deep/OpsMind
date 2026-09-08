@@ -4,7 +4,6 @@ import {
   Activity,
   Brain,
   History,
-  Key,
   LogIn,
   LogOut,
   Menu,
@@ -19,7 +18,7 @@ import { routes } from "../../lib/routes";
 import { Badge } from "../common/Badge";
 import { Button } from "../common/Button";
 import { OpsMindLogo } from "../common/OpsMindLogo";
-import { ApiKeyModal } from "./ApiKeyModal";
+import { NotificationBell } from "./NotificationBell";
 
 interface HeaderProps {
   onNewInvestigationClick: () => void;
@@ -48,7 +47,6 @@ export function Header({
 }: HeaderProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
   const [systemReady, setSystemReady] = useState<boolean | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const sessionUser = getStoredUser();
@@ -84,33 +82,33 @@ export function Header({
   return (
     <header className="sticky top-0 z-40 border-b border-surface-800/40 bg-[#030712]/85 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-14 sm:h-16 gap-2 min-w-0">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-hidden">
+        <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <NavLink
               to={routes.home}
-              className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none min-w-0 max-w-full"
+              className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none shrink-0"
             >
               <OpsMindLogo className="w-8 h-8 sm:w-9 sm:h-9 shrink-0 group-hover:scale-105 transition-transform" />
-              <div className="min-w-0 overflow-hidden">
-                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                  <span className="font-app-heading text-base sm:text-lg text-white tracking-tight truncate">
+              <div className="hidden min-[380px]:block shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-app-heading text-base sm:text-lg text-white tracking-tight whitespace-nowrap">
                     OpsMind
                   </span>
                   <Badge
                     variant="success"
                     size="xs"
-                    className="hidden 2xl:inline-flex shrink-0"
+                    className="hidden xl:inline-flex shrink-0"
                   >
                     Console
                   </Badge>
                 </div>
-                <p className="text-[10px] sm:text-[11px] text-surface-500 -mt-0.5 hidden lg:block truncate">
+                <p className="text-[10px] sm:text-[11px] text-surface-500 -mt-0.5 hidden xl:block whitespace-nowrap">
                   Operations Intelligence
                 </p>
               </div>
             </NavLink>
 
-            <div className="hidden 2xl:flex items-center gap-2 pl-3 ml-0.5 border-l border-surface-800 shrink-0">
+            <div className="hidden xl:flex items-center gap-2 pl-3 ml-0.5 border-l border-surface-800 shrink-0">
               <div className="flex flex-col leading-tight px-1.5 py-0.5 rounded-md bg-surface-900/50 border border-surface-800/80">
                 <span className="text-[9px] uppercase tracking-wide text-surface-500">Runs</span>
                 <span className="text-surface-100 font-mono text-xs font-medium tabular-nums">
@@ -137,7 +135,7 @@ export function Header({
               className={({ isActive }) => navClassName(isActive)}
             >
               <Compass className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden 2xl:inline">Home</span>
+              <span className="hidden xl:inline">Home</span>
             </NavLink>
 
             <NavLink
@@ -146,7 +144,7 @@ export function Header({
               className={({ isActive }) => navClassName(isActive)}
             >
               <Activity className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden 2xl:inline">Console</span>
+              <span className="hidden xl:inline">Console</span>
             </NavLink>
 
             <NavLink
@@ -155,7 +153,7 @@ export function Header({
               className={({ isActive }) => navClassName(isActive)}
             >
               <History className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden 2xl:inline">History</span>
+              <span className="hidden xl:inline">History</span>
               {investigationCount > 0 && (
                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-surface-900/80 text-surface-300 font-mono">
                   {investigationCount}
@@ -169,7 +167,7 @@ export function Header({
               className={({ isActive }) => navClassName(isActive)}
             >
               <Brain className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden 2xl:inline">Cases</span>
+              <span className="hidden xl:inline">Cases</span>
               {approvedCount > 0 && (
                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-accent-950 text-accent-300 font-mono border border-accent-800/60">
                   {approvedCount}
@@ -183,7 +181,7 @@ export function Header({
               className={({ isActive }) => navClassName(isActive)}
             >
               <Wrench className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden 2xl:inline">Tools</span>
+              <span className="hidden xl:inline">Tools</span>
             </NavLink>
 
             <NavLink
@@ -192,7 +190,7 @@ export function Header({
               className={({ isActive }) => navClassName(isActive)}
             >
               <Settings2 className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden 2xl:inline">Settings</span>
+              <span className="hidden xl:inline">Settings</span>
             </NavLink>
           </nav>
 
@@ -237,16 +235,8 @@ export function Header({
               )}
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<Key className="w-3.5 h-3.5 text-accent-400" />}
-              onClick={() => setIsKeyModalOpen(true)}
-              title="Configure API Key Auth"
-              className="min-h-10 px-2.5 sm:px-3"
-            >
-              <span className="hidden sm:inline">API Key</span>
-            </Button>
+            {/* Notification bell — only when authenticated */}
+            {hasJwt && <NotificationBell />}
 
             {hasJwt ? (
               <Button
@@ -385,8 +375,6 @@ export function Header({
           </div>
         )}
       </div>
-
-      <ApiKeyModal isOpen={isKeyModalOpen} onClose={() => setIsKeyModalOpen(false)} />
     </header>
   );
 }

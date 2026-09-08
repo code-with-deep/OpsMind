@@ -262,12 +262,19 @@ OpsMind/
 | `0004` | Investigation JSON report fields (`hypothesis`, `critique`, `recommendation`) |
 | `0005` | Cryptographic audit trail JSONB field (`audit`) |
 | `0006` | Human-in-the-loop review & episodic case memory tables (`reviews`, `case_summaries`) |
+| `0007` | Multi-tenant core (`tenants`, `users`, `api_keys`, `tenant_settings` + `tenant_id` + RLS) |
+| `0008` | Invite codes |
+| `0009` | CSV ingest jobs (`ingest_jobs`) |
+
+Multi-tenant onboarding (MT2–MT5): signup → invite → CSV upload → playbooks → investigate.
+See `docs/MULTI_TENANT.md` and `AGENTS.md`. Demo seed data belongs to the `demo` tenant only.
 
 ---
 
 ## Documentation Index
 
 - [Architecture & Design Decisions](docs/ARCHITECTURE.md)
+- [Multi-tenant plan & status](docs/MULTI_TENANT.md)
 - [E2E Operations Demo Script](docs/DEMO_SCRIPT.md)
 - [Evaluation Baseline Scorecard](docs/EVAL_BASELINE.md)
 - [Planted Failure Scenarios](docs/SEED_SCENARIOS.md)

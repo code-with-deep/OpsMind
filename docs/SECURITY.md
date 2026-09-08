@@ -5,28 +5,39 @@ guardrails, per-run tool budgets, RAG sanitization, and terminal audit records.
 
 ## Authentication
 
-Set `OPSMIND_API_KEY` in `.env`. Protected routes:
+OpsMind supports two auth modes (multi-tenant MT1–MT6):
 
-- `/investigations/*`
-- `/tools/*`
+1. **Web JWT** — signup/login at `/auth/signup` and `/auth/login`. The SPA stores
+   `access_token` and sends `Authorization: Bearer <jwt>`.
+2. **Per-tenant API keys** — Admins create keys in Settings (`POST /auth/api-keys`).
+   Keys are hashed at rest; the raw value is shown once. Send as
+   `X-API-Key: <key>` or `Authorization: Bearer <key>`.
 
-Public routes:
+Legacy bootstrap: `OPSMIND_API_KEY` in `.env` still authenticates as the **demo**
+tenant only for local demos (API header / explicitly pasted web key). The SPA does
+**not** auto-inject that key — Console/History require JWT login or a saved key.
+Real companies must use JWT or their own per-tenant keys.
 
-- `/`, `/health`, `/ready`, `/docs`
+Protected routes include `/investigations/*`, `/tools/*`, `/playbooks/*`, `/data/*`,
+`/warehouse`, and most `/auth/*` management endpoints. Public: `/`, `/health`, `/ready`, `/docs`,
+plus `/auth/signup`, `/auth/login`, `/auth/join`.
 
-Send the key as either:
+Unauthenticated calls return **401**. Cross-tenant reads are blocked by
+`tenant_id` filters and Postgres RLS.
 
-```http
-X-API-Key: <OPSMIND_API_KEY>
-```
+### Soft limits (examples)
 
-or
+- Active invite codes, API keys, playbooks, CSV size/rows, investigations/day
+  — stored on `tenant_settings.soft_limits` with env defaults.
 
-```http
-Authorization: Bearer <OPSMIND_API_KEY>
-```
+### Warehouse connector (MT6)
 
-Unauthenticated calls return **401**.
+Admins can save a **read-only Postgres** DSN in Settings (`PUT /warehouse`). The
+password/DSN is Fernet-encrypted (`OPSMIND_SECRETS_KEY`, else derived from
+`JWT_SECRET`) and **never returned** by the API. Only allowlisted SQL templates
+run against the connector. Unverified connections **fail closed** (block SQL
+fallback to CSV until fixed or deleted). Customer warehouses are expected to be
+single-tenant; when pointing at OpsMind’s shared DB, tenant GUC + RLS still apply.
 
 ## Input guardrails
 

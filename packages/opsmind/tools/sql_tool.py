@@ -74,14 +74,12 @@ def _validate_params(template: SqlTemplate, params: dict[str, Any]) -> dict[str,
         raise SqlToolError(
             f"Missing required params for '{template.key}': {', '.join(missing)}"
         )
-    # Only bind declared params — ignore extras to avoid injection via unexpected binds.
     return {k: params[k] for k in template.required_params}
 
 
 def get_readonly_engine(database_url_readonly: str) -> Engine:
     global _READONLY_ENGINE, _READONLY_SESSION
     if _READONLY_ENGINE is None:
-        # asyncpg URLs are for the API; tools use sync psycopg2.
         url = database_url_readonly.replace("postgresql+asyncpg://", "postgresql://")
         _READONLY_ENGINE = create_engine(url, pool_pre_ping=True, pool_size=3, max_overflow=5)
         _READONLY_SESSION = sessionmaker(_READONLY_ENGINE, expire_on_commit=False)
@@ -94,20 +92,31 @@ def get_readonly_session_factory(database_url_readonly: str) -> sessionmaker[Ses
     return _READONLY_SESSION
 
 
+def _resolve_factory(
+    *,
+    database_url_readonly: str,
+) -> sessionmaker[Session]:
+    """Return the shared read-only session factory (CSV data plane)."""
+    return get_readonly_session_factory(database_url_readonly)
+
+
 def execute_sql_query_readonly(
     template_key: str,
     params: dict[str, Any],
     database_url_readonly: str,
+    tenant_id: uuid.UUID,
 ) -> list[dict[str, Any]]:
-    """Execute allowlisted SQL template directly in read-only mode (without memory persistence)."""
+    """Execute allowlisted SQL template in read-only mode (without memory persistence)."""
     template = get_template(template_key)
     _assert_template_safe(template)
     bind_params = _validate_params(template, params)
-    factory = get_readonly_session_factory(database_url_readonly)
+    factory = _resolve_factory(database_url_readonly=database_url_readonly)
+    from opsmind.db.tenant_session import apply_tenant_session
+
     with factory() as ro_session:
+        apply_tenant_session(ro_session, tenant_id)
         result = ro_session.execute(text(template.sql), bind_params)
         return [_row_to_dict(row) for row in result.mappings().all()]
-
 
 
 def dispose_readonly_engine() -> None:
@@ -135,6 +144,7 @@ def run_sql_tool(
     params: dict[str, Any],
     database_url_readonly: str,
     owner_session: Session,
+    tenant_id: uuid.UUID,
     investigation_id: uuid.UUID | None = None,
     registry: SourceIdRegistry | None = None,
     persist: bool = True,
@@ -149,8 +159,11 @@ def run_sql_tool(
     bind_params = _validate_params(template, params)
 
     started = time.perf_counter()
-    factory = get_readonly_session_factory(database_url_readonly)
+    factory = _resolve_factory(database_url_readonly=database_url_readonly)
+    from opsmind.db.tenant_session import apply_tenant_session
+
     with factory() as ro_session:
+        apply_tenant_session(ro_session, tenant_id)
         result = ro_session.execute(text(template.sql), bind_params)
         rows = [_row_to_dict(row) for row in result.mappings().all()]
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -184,7 +197,9 @@ def run_sql_tool(
                 "result_fingerprint": fp,
             }
         ],
-        assumptions=["Business tables are seeded and up to date."],
+        assumptions=[
+            "Allowlisted SQL ran against the tenant warehouse or OpsMind CSV data plane."
+        ],
         gaps=gaps,
         source_id=source_id,
     )
@@ -206,6 +221,7 @@ def run_sql_tool(
     if persist:
         inv, finding = persist_tool_result(
             owner_session,
+            tenant_id=tenant_id,
             investigation_id=investigation_id,
             tool_name="sql",
             template_key=template.key,

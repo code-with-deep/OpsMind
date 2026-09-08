@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from opsmind.db.session import get_owner_session_factory
+from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
 from opsmind.graph.events import update_investigation, write_event
 from opsmind.graph.state import InvestigationState
 
@@ -13,6 +14,7 @@ from opsmind.graph.state import InvestigationState
 def insufficient_evidence_node(state: InvestigationState) -> dict[str, Any]:
     runtime = state.get("runtime") or {}
     inv_id = uuid.UUID(state["investigation_id"])
+    tenant_id = tenant_id_from_runtime(runtime)
     critique = state.get("critique") or {}
     gaps = list(critique.get("gaps") or [])
     budget_stop = "budget_exceeded" in gaps or state.get("status") == "budget_exceeded"
@@ -49,8 +51,10 @@ def insufficient_evidence_node(state: InvestigationState) -> dict[str, Any]:
 
     factory = get_owner_session_factory(runtime["database_url_sync"])
     with factory() as session:
+        apply_tenant_session(session, tenant_id)
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=inv_id,
             event_type="agent_insufficient_evidence",
             payload={"gaps": gaps, "status": terminal},

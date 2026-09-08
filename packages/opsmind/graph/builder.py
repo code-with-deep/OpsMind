@@ -1,4 +1,4 @@
-"""LangGraph builder — P4 self-correction + abstain routes."""
+"""LangGraph builder — P4 self-correction + abstain routes + case memory enrichment."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 
+from opsmind.agents.case_memory_agent import case_memory_node
 from opsmind.agents.critic import critic_node
 from opsmind.agents.data_investigator import data_investigator_node
 from opsmind.agents.insufficient import insufficient_evidence_node
@@ -18,11 +19,12 @@ from opsmind.graph.state import InvestigationState
 
 def _route_after_planner(
     state: InvestigationState,
-) -> Literal["data_investigator", "end"]:
+) -> Literal["case_memory", "end"]:
+    """Route to case_memory enrichment (first pass + retries) or abstain."""
     status = state.get("status") or ""
     if status in {"unsupported", "needs_clarification"}:
         return "end"
-    return "data_investigator"
+    return "case_memory"
 
 
 def _route_after_critic(
@@ -43,10 +45,20 @@ def _fanout_passthrough(state: InvestigationState) -> dict[str, Any]:
 
 
 def build_investigation_graph():
-    """Planner triage → tools fan-out → synth → critic loop → recommender/abstain."""
+    """
+    Pipeline:
+      START → planner → case_memory → data_investigator → knowledge
+            → synthesizer → critic → recommender / insufficient_evidence → END
+
+    case_memory enriches every first-pass investigation with similar approved cases
+    from the tenant's history.  On retries (retry_count > 0) it returns cheaply
+    without re-fetching.  Critic retries route back through planner → case_memory
+    → data_investigator so the graph topology stays simple.
+    """
     graph = StateGraph(InvestigationState)
 
     graph.add_node("planner", planner_node)
+    graph.add_node("case_memory", case_memory_node)   # NEW: case memory enrichment
     graph.add_node("fanout", _fanout_passthrough)
     graph.add_node("data_investigator", data_investigator_node)
     graph.add_node("knowledge", knowledge_node)
@@ -59,8 +71,10 @@ def build_investigation_graph():
     graph.add_conditional_edges(
         "planner",
         _route_after_planner,
-        {"data_investigator": "data_investigator", "end": END},
+        {"case_memory": "case_memory", "end": END},
     )
+    # case_memory always feeds into data_investigator
+    graph.add_edge("case_memory", "data_investigator")
     graph.add_edge("data_investigator", "knowledge")
     graph.add_edge("knowledge", "synthesizer")
     graph.add_edge("synthesizer", "critic")

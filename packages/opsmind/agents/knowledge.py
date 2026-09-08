@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from opsmind.db.session import get_owner_session_factory
+from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
 from opsmind.graph.events import write_event
 from opsmind.graph.state import InvestigationState
 from opsmind.guardrails.budget import BudgetExceededError, consume_tool_budget
@@ -22,9 +23,12 @@ def knowledge_node(state: InvestigationState) -> dict[str, Any]:
     errors: list[str] = []
 
     factory = get_owner_session_factory(runtime["database_url_sync"])
+    tenant_id = tenant_id_from_runtime(runtime)
     with factory() as session:
+        apply_tenant_session(session, tenant_id)
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=inv_id,
             event_type="agent_knowledge",
             payload={"rag_steps": len(rag_steps)},
@@ -36,6 +40,7 @@ def knowledge_node(state: InvestigationState) -> dict[str, Any]:
                 result = run_rag_tool(
                     query=query,
                     owner_session=session,
+                    tenant_id=tenant_id,
                     investigation_id=inv_id,
                     min_score=0.01,
                 )
@@ -64,6 +69,7 @@ def knowledge_node(state: InvestigationState) -> dict[str, Any]:
 
         write_event(
             session,
+            tenant_id=tenant_id,
             investigation_id=inv_id,
             event_type="agent_knowledge_done",
             payload={"findings": len(findings), "errors": errors},

@@ -17,7 +17,7 @@ from opsmind.domain.evidence import Evidence
 from opsmind.grounding.registry import SourceIdRegistry, default_registry
 from opsmind.guardrails.rag_sanitize import sanitize_rag_text
 from opsmind.memory.persist import persist_tool_result
-from opsmind.tools.embeddings import local_embed
+from opsmind.tools.embeddings import embed_one
 
 
 class RagToolError(ValueError):
@@ -61,18 +61,19 @@ def _fingerprint(hits: list[RagHit]) -> str:
 def retrieve_playbooks(
     session: Session,
     *,
+    tenant_id: uuid.UUID,
     query: str,
     top_k: int = 5,
     min_score: float = 0.05,
 ) -> list[RagHit]:
-    """Return top playbook chunks by cosine similarity (local embeddings)."""
+    """Return top playbook chunks by cosine similarity (tenant-scoped)."""
     q = (query or "").strip()
     if not q:
         raise RagToolError("query must be a non-empty string")
     if top_k < 1 or top_k > 20:
         raise RagToolError("top_k must be between 1 and 20")
 
-    vector = local_embed(q)
+    vector = embed_one(q)
     embedding_literal = "[" + ",".join(f"{v:.8f}" for v in vector) + "]"
     # pgvector cosine distance (`<=>`): smaller is closer. Convert to similarity.
     sql = text(
@@ -87,13 +88,14 @@ def retrieve_playbooks(
             1 - (c.embedding <=> CAST(:embedding AS vector)) AS score
         FROM document_chunks c
         JOIN documents d ON d.id = c.document_id
+        WHERE c.tenant_id = :tenant_id
         ORDER BY c.embedding <=> CAST(:embedding AS vector)
         LIMIT :top_k
         """
     )
     rows = session.execute(
         sql,
-        {"embedding": embedding_literal, "top_k": top_k},
+        {"embedding": embedding_literal, "top_k": top_k, "tenant_id": str(tenant_id)},
     ).mappings().all()
 
     hits: list[RagHit] = []
@@ -118,6 +120,7 @@ def run_rag_tool(
     *,
     query: str,
     owner_session: Session,
+    tenant_id: uuid.UUID,
     investigation_id: uuid.UUID | None = None,
     top_k: int = 5,
     min_score: float = 0.01,
@@ -126,7 +129,7 @@ def run_rag_tool(
 ) -> RagToolResult:
     started = time.perf_counter()
     hits = retrieve_playbooks(
-        owner_session, query=query, top_k=top_k, min_score=min_score
+        owner_session, tenant_id=tenant_id, query=query, top_k=top_k, min_score=min_score
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -178,6 +181,7 @@ def run_rag_tool(
     if persist:
         inv, finding = persist_tool_result(
             owner_session,
+            tenant_id=tenant_id,
             investigation_id=investigation_id,
             tool_name="rag",
             template_key=None,

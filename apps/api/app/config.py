@@ -34,6 +34,25 @@ class Settings(BaseSettings):
     # P5 — API auth (required for /investigations and /tools)
     opsmind_api_key: str
 
+    # MT2 — web session JWT (email/password login)
+    jwt_secret: str = "change-me-opsmind-jwt-secret-dev-only"
+    jwt_expire_hours: int = 72
+    auth_invite_default_max_uses: int = 10
+    auth_invite_default_ttl_days: int = 14
+    auth_max_active_invites: int = 25
+
+    # MT3 — playbooks / embeddings
+    opsmind_embedding_provider: str = "local"
+    openai_api_key: str = ""
+    openai_api_base: str = "https://api.openai.com/v1"
+    opsmind_embedding_model: str = "text-embedding-3-small"
+    playbook_max_count: int = 25
+    playbook_max_upload_mb: int = 2
+
+    # MT4 — CSV soft limits
+    csv_max_upload_mb: int = 10
+    csv_max_rows: int = 50000
+
 
 @lru_cache
 def get_settings() -> Settings:

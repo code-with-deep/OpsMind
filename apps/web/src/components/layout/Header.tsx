@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import { api, clearSession, getAccessToken, getStoredUser } from "../../lib/api";
 import { routes } from "../../lib/routes";
-import { Badge } from "../common/Badge";
 import { Button } from "../common/Button";
 import { OpsMindLogo } from "../common/OpsMindLogo";
 import { NotificationBell } from "./NotificationBell";
@@ -25,18 +24,67 @@ interface HeaderProps {
   approvedCount?: number;
 }
 
-function navClassName(isActive: boolean) {
-  return `flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+function navLink(isActive: boolean) {
+  return [
+    "relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-150",
     isActive
-      ? "bg-accent-500 text-surface-950 shadow-glow-accent"
-      : "text-surface-400 hover:text-surface-100 hover:bg-surface-800/60"
-  }`;
+      ? "bg-accent-500 text-surface-950 shadow-sm"
+      : "text-surface-400 hover:text-surface-100 hover:bg-surface-800/50",
+  ].join(" ");
 }
 
-function mobileNavClassName(isActive: boolean) {
-  return `w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-    isActive ? "bg-accent-500 text-surface-950" : "text-surface-300 hover:bg-surface-800"
-  }`;
+function mobileNavLink(isActive: boolean) {
+  return [
+    "w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+    isActive ? "bg-accent-500 text-surface-950" : "text-surface-300 hover:bg-surface-800/60",
+  ].join(" ");
+}
+
+/** Small pill badge used for counts inside nav links */
+function NavCount({ count, active }: { count: number; active: boolean }) {
+  if (count === 0) return null;
+  return (
+    <span
+      className={[
+        "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold tabular-nums px-1",
+        active
+          ? "bg-surface-950/25 text-surface-950"
+          : "bg-surface-800 text-surface-300",
+      ].join(" ")}
+    >
+      {count}
+    </span>
+  );
+}
+
+/** Pulsing API status dot */
+function ApiDot({ ready }: { ready: boolean | null }) {
+  const title =
+    ready === true ? "API Ready" : ready === false ? "API Offline" : "Checking API…";
+  const color =
+    ready === true
+      ? "bg-emerald-400"
+      : ready === false
+      ? "bg-rose-400"
+      : "bg-surface-500";
+  return (
+    <span title={title} className="relative flex items-center justify-center w-5 h-5 shrink-0">
+      {ready === true && (
+        <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-30 animate-ping" />
+      )}
+      <span className={`relative inline-flex rounded-full w-2 h-2 ${color}`} />
+    </span>
+  );
+}
+
+/** User avatar circle with first-letter initial */
+function UserAvatar({ name }: { name: string }) {
+  const initial = (name || "?")[0].toUpperCase();
+  return (
+    <span className="w-7 h-7 rounded-full bg-accent-800/60 border border-accent-600/40 flex items-center justify-center text-xs font-bold text-accent-200 shrink-0 select-none">
+      {initial}
+    </span>
+  );
 }
 
 export function Header({
@@ -51,6 +99,9 @@ export function Header({
   const sessionUser = getStoredUser();
   const hasJwt = Boolean(getAccessToken());
 
+  // Display name: prefer tenant name, fall back to email prefix
+  const displayName = sessionUser?.tenant?.name || sessionUser?.email?.split("@")[0] || "";
+
   const handleLogout = () => {
     clearSession();
     navigate(routes.login);
@@ -62,7 +113,7 @@ export function Header({
 
   useEffect(() => {
     let mounted = true;
-    const checkSystem = async () => {
+    const check = async () => {
       try {
         await api.checkReady();
         if (mounted) setSystemReady(true);
@@ -70,290 +121,193 @@ export function Header({
         if (mounted) setSystemReady(false);
       }
     };
-    checkSystem();
-    const interval = setInterval(checkSystem, 15000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
+    check();
+    const iv = setInterval(check, 15_000);
+    return () => { mounted = false; clearInterval(iv); };
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-surface-800/40 bg-[#030712]/85 backdrop-blur-xl">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-3 min-w-0">
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <NavLink
-              to={routes.home}
-              className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none shrink-0"
-            >
-              <OpsMindLogo className="w-8 h-8 sm:w-9 sm:h-9 shrink-0 group-hover:scale-105 transition-transform" />
-              <div className="hidden min-[380px]:block shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-app-heading text-base sm:text-lg text-white tracking-tight whitespace-nowrap">
-                    OpsMind
-                  </span>
-                  <Badge
-                    variant="success"
-                    size="xs"
-                    className="hidden xl:inline-flex shrink-0"
-                  >
-                    Console
-                  </Badge>
-                </div>
-                <p className="text-[10px] sm:text-[11px] text-surface-500 -mt-0.5 hidden xl:block whitespace-nowrap">
-                  Operations Intelligence
-                </p>
-              </div>
-            </NavLink>
+    <header className="sticky top-0 z-40 border-b border-surface-800/40 bg-[#030712]/90 backdrop-blur-xl">
+      <div className="max-w-7xl mx-auto px-3 sm:px-5 lg:px-8">
+        <div className="flex items-center justify-between h-14 gap-3 min-w-0">
 
-            <div className="hidden xl:flex items-center gap-2 pl-3 ml-0.5 border-l border-surface-800 shrink-0">
-              <div className="flex flex-col leading-tight px-1.5 py-0.5 rounded-md bg-surface-900/50 border border-surface-800/80">
-                <span className="text-[9px] uppercase tracking-wide text-surface-500">Runs</span>
-                <span className="text-surface-100 font-mono text-xs font-medium tabular-nums">
-                  {investigationCount}
-                </span>
-              </div>
-              <div className="flex flex-col leading-tight px-1.5 py-0.5 rounded-md bg-surface-900/50 border border-surface-800/80">
-                <span className="text-[9px] uppercase tracking-wide text-surface-500">Approved</span>
-                <span className="text-accent-400 font-mono text-xs font-medium tabular-nums">
-                  {approvedCount}
-                </span>
-              </div>
-            </div>
-          </div>
+          {/* ── Brand ───────────────────────────────────────────────── */}
+          <NavLink
+            to={routes.home}
+            className="flex items-center gap-2 shrink-0 group focus:outline-none"
+          >
+            <OpsMindLogo className="w-8 h-8 shrink-0 group-hover:scale-105 transition-transform" />
+            <span className="font-app-heading text-base text-white tracking-tight whitespace-nowrap hidden sm:block">
+              OpsMind
+            </span>
+          </NavLink>
 
+          {/* ── Primary nav (desktop) ────────────────────────────────── */}
           <nav
-            className="hidden lg:flex items-center gap-0.5 landing-glass p-1 rounded-xl border border-surface-700/50 shrink-0"
+            className="hidden lg:flex items-center gap-0.5 bg-surface-900/60 border border-surface-700/50 p-1 rounded-xl shrink-0"
             aria-label="Primary"
           >
-            <NavLink
-              to={routes.home}
-              end
-              title="Home"
-              className={({ isActive }) => navClassName(isActive)}
-            >
+            <NavLink to={routes.home} end title="Home"
+              className={({ isActive }) => navLink(isActive)}>
               <Compass className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline">Home</span>
+              Home
             </NavLink>
 
-            <NavLink
-              to={routes.console}
-              title="Console"
-              className={({ isActive }) => navClassName(isActive)}
-            >
+            <NavLink to={routes.console} title="Console"
+              className={({ isActive }) => navLink(isActive)}>
               <Activity className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline">Console</span>
+              Console
             </NavLink>
 
-            <NavLink
-              to={routes.history}
-              title="History"
-              className={({ isActive }) => navClassName(isActive)}
-            >
-              <History className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline">History</span>
-              {investigationCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-surface-900/80 text-surface-300 font-mono">
-                  {investigationCount}
-                </span>
+            <NavLink to={routes.history} title="History"
+              className={({ isActive }) => navLink(isActive)}>
+              {({ isActive }) => (
+                <>
+                  <History className="w-3.5 h-3.5 shrink-0" />
+                  History
+                  <NavCount count={investigationCount} active={isActive} />
+                </>
               )}
             </NavLink>
 
-            <NavLink
-              to={routes.cases}
-              title="Cases"
-              className={({ isActive }) => navClassName(isActive)}
-            >
-              <Brain className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline">Cases</span>
-              {approvedCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-accent-950 text-accent-300 font-mono border border-accent-800/60">
-                  {approvedCount}
-                </span>
+            <NavLink to={routes.cases} title="Cases"
+              className={({ isActive }) => navLink(isActive)}>
+              {({ isActive }) => (
+                <>
+                  <Brain className="w-3.5 h-3.5 shrink-0" />
+                  Cases
+                  <NavCount count={approvedCount} active={isActive} />
+                </>
               )}
             </NavLink>
 
-            <NavLink
-              to={routes.settings}
-              title="Settings"
-              className={({ isActive }) => navClassName(isActive)}
-            >
+            <NavLink to={routes.settings} title="Settings"
+              className={({ isActive }) => navLink(isActive)}>
               <Settings2 className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline">Settings</span>
+              Settings
             </NavLink>
           </nav>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 relative z-10">
-            <div className="hidden 2xl:flex items-center">
-              {systemReady === true ? (
-                <Badge variant="success" size="sm" dot>
-                  API Ready
-                </Badge>
-              ) : systemReady === false ? (
-                <Badge variant="error" size="sm" dot>
-                  API Offline
-                </Badge>
-              ) : (
-                <Badge variant="default" size="sm" dot>
-                  Checking...
-                </Badge>
-              )}
-            </div>
-            <div
-              className="hidden lg:flex 2xl:hidden items-center"
-              title={
-                systemReady === true
-                  ? "API Ready"
-                  : systemReady === false
-                    ? "API Offline"
-                    : "Checking API…"
-              }
-            >
-              {systemReady === true ? (
-                <Badge variant="success" size="sm" dot className="px-2">
-                  <span className="sr-only">API Ready</span>
-                </Badge>
-              ) : systemReady === false ? (
-                <Badge variant="error" size="sm" dot className="px-2">
-                  <span className="sr-only">API Offline</span>
-                </Badge>
-              ) : (
-                <Badge variant="default" size="sm" dot className="px-2">
-                  <span className="sr-only">Checking API</span>
-                </Badge>
-              )}
-            </div>
+          {/* ── Right-side actions ───────────────────────────────────── */}
+          <div className="flex items-center gap-1.5 shrink-0">
 
-            {/* Notification bell — only when authenticated */}
+            {/* API status dot */}
+            <ApiDot ready={systemReady} />
+
+            {/* Notification bell */}
             {hasJwt && <NotificationBell />}
 
+            {/* User / sign-in */}
             {hasJwt ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<LogOut className="w-3.5 h-3.5" />}
-                onClick={handleLogout}
-                title={sessionUser?.email || "Sign out"}
-                className="min-h-10 px-2.5 sm:px-3"
-              >
-                <span className="hidden 2xl:inline max-w-[9rem] truncate">
-                  {sessionUser?.tenant.name || "Sign out"}
-                </span>
-              </Button>
+              <div className="hidden lg:flex items-center gap-1.5 pl-1.5 border-l border-surface-800 ml-0.5">
+                <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-surface-900/60 border border-surface-800/80 max-w-[10rem]">
+                  <UserAvatar name={displayName} />
+                  <span className="text-xs text-surface-300 truncate hidden xl:block">
+                    {displayName}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  title="Sign out"
+                  className="p-2 rounded-lg text-surface-500 hover:text-rose-400 hover:bg-rose-950/30 transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
             ) : (
               <Button
                 variant="secondary"
                 size="sm"
                 icon={<LogIn className="w-3.5 h-3.5" />}
                 onClick={() => navigate(routes.login)}
-                className="min-h-10 px-2.5 sm:px-3"
+                className="hidden lg:flex"
               >
-                <span className="hidden sm:inline">Sign in</span>
+                Sign in
               </Button>
             )}
 
+            {/* New Investigation CTA */}
             <Button
               variant="accent"
               size="sm"
-              icon={<PlusCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+              icon={<PlusCircle className="w-4 h-4" />}
               onClick={onNewInvestigationClick}
-              className="min-h-10 px-3 sm:px-3.5"
+              className="px-3 sm:px-3.5"
             >
               <span className="hidden sm:inline">New Investigation</span>
               <span className="sm:hidden font-semibold">New</span>
             </Button>
 
+            {/* Mobile menu toggle */}
             <button
               type="button"
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden touch-target rounded-lg bg-surface-900/80 border border-surface-700 text-surface-300 hover:text-white focus:outline-none"
-              aria-label="Toggle navigation menu"
+              onClick={() => setIsMobileMenuOpen((v) => !v)}
+              className="lg:hidden p-2 rounded-lg bg-surface-900/80 border border-surface-700 text-surface-300 hover:text-white transition-colors"
+              aria-label="Toggle menu"
             >
-              {isMobileMenuOpen ? (
-                <X className="w-4 h-4 sm:w-5 sm:h-5" />
-              ) : (
-                <Menu className="w-4 h-4 sm:w-5 sm:h-5" />
-              )}
+              {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
           </div>
         </div>
 
+        {/* ── Mobile menu ──────────────────────────────────────────────── */}
         {isMobileMenuOpen && (
-          <div className="lg:hidden py-3 border-t border-surface-800 space-y-1 animate-slide-up pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-            <div className="px-3 py-1.5 mb-2 flex flex-wrap items-center justify-between gap-2 app-panel text-xs">
-              <span className="text-surface-400">API Status</span>
-              {systemReady === true ? (
-                <span className="text-accent-400 font-medium">Connected</span>
-              ) : systemReady === false ? (
-                <span className="text-rose-400 font-medium">Offline</span>
-              ) : (
-                <span className="text-surface-400 font-medium">Checking...</span>
+          <div className="lg:hidden py-3 border-t border-surface-800/60 space-y-1 animate-slide-up pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+
+            {/* API + user row */}
+            <div className="flex items-center justify-between px-3 py-2 mb-1 rounded-lg bg-surface-900/40 border border-surface-800/60">
+              <div className="flex items-center gap-2 text-xs text-surface-400">
+                <ApiDot ready={systemReady} />
+                {systemReady === true ? "API Ready" : systemReady === false ? "API Offline" : "Checking…"}
+              </div>
+              {hasJwt && sessionUser && (
+                <div className="flex items-center gap-1.5">
+                  <UserAvatar name={displayName} />
+                  <span className="text-xs text-surface-300 max-w-[8rem] truncate">{displayName}</span>
+                </div>
               )}
             </div>
 
-            <div className="px-3 py-2 mb-2 grid grid-cols-2 gap-2">
-              <div className="rounded-lg border border-surface-800 bg-surface-900/40 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-surface-500">Runs</p>
-                <p className="font-mono text-sm text-surface-100">{investigationCount}</p>
-              </div>
-              <div className="rounded-lg border border-surface-800 bg-surface-900/40 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-surface-500">Approved</p>
-                <p className="font-mono text-sm text-accent-400">{approvedCount}</p>
-              </div>
-            </div>
-
-            <NavLink to={routes.home} end className={({ isActive }) => mobileNavClassName(isActive)}>
-              <span className="flex items-center gap-2.5">
-                <Compass className="w-4 h-4" /> Home
-              </span>
+            {/* Nav links */}
+            <NavLink to={routes.home} end className={({ isActive }) => mobileNavLink(isActive)}>
+              <span className="flex items-center gap-2.5"><Compass className="w-4 h-4" /> Home</span>
             </NavLink>
 
-            <NavLink to={routes.console} className={({ isActive }) => mobileNavClassName(isActive)}>
-              <span className="flex items-center gap-2.5">
-                <Activity className="w-4 h-4" /> Console
-              </span>
+            <NavLink to={routes.console} className={({ isActive }) => mobileNavLink(isActive)}>
+              <span className="flex items-center gap-2.5"><Activity className="w-4 h-4" /> Console</span>
             </NavLink>
 
-            <NavLink to={routes.history} className={({ isActive }) => mobileNavClassName(isActive)}>
-              <span className="flex items-center gap-2.5">
-                <History className="w-4 h-4" /> History
-              </span>
-              <span className="font-mono text-xs px-2 py-0.5 rounded-full bg-surface-900 text-surface-200">
-                {investigationCount}
-              </span>
+            <NavLink to={routes.history} className={({ isActive }) => mobileNavLink(isActive)}>
+              <span className="flex items-center gap-2.5"><History className="w-4 h-4" /> History</span>
+              {investigationCount > 0 && (
+                <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-surface-800 text-surface-300">{investigationCount}</span>
+              )}
             </NavLink>
 
-            <NavLink to={routes.cases} className={({ isActive }) => mobileNavClassName(isActive)}>
-              <span className="flex items-center gap-2.5">
-                <Brain className="w-4 h-4" /> Case Memory
-              </span>
-              <span className="font-mono text-xs px-2 py-0.5 rounded-full bg-accent-950 text-accent-300 border border-accent-800/60">
-                {approvedCount}
-              </span>
+            <NavLink to={routes.cases} className={({ isActive }) => mobileNavLink(isActive)}>
+              <span className="flex items-center gap-2.5"><Brain className="w-4 h-4" /> Case Memory</span>
+              {approvedCount > 0 && (
+                <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-accent-950 text-accent-300 border border-accent-800/60">{approvedCount}</span>
+              )}
             </NavLink>
 
-            <NavLink to={routes.settings} className={({ isActive }) => mobileNavClassName(isActive)}>
-              <span className="flex items-center gap-2.5">
-                <Settings2 className="w-4 h-4" /> Settings
-              </span>
+            <NavLink to={routes.settings} className={({ isActive }) => mobileNavLink(isActive)}>
+              <span className="flex items-center gap-2.5"><Settings2 className="w-4 h-4" /> Settings</span>
             </NavLink>
 
+            {/* Auth action */}
             {hasJwt ? (
               <button
                 type="button"
                 onClick={handleLogout}
-                className={mobileNavClassName(false)}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-rose-400 hover:bg-rose-950/30 transition-colors mt-1"
               >
-                <span className="flex items-center gap-2.5">
-                  <LogOut className="w-4 h-4" /> Sign out
-                </span>
+                <LogOut className="w-4 h-4" /> Sign out
               </button>
             ) : (
-              <NavLink to={routes.login} className={({ isActive }) => mobileNavClassName(isActive)}>
-                <span className="flex items-center gap-2.5">
-                  <LogIn className="w-4 h-4" /> Sign in
-                </span>
+              <NavLink to={routes.login} className={({ isActive }) => mobileNavLink(isActive)}>
+                <span className="flex items-center gap-2.5"><LogIn className="w-4 h-4" /> Sign in</span>
               </NavLink>
             )}
           </div>

@@ -25,7 +25,6 @@ interface LandingPageProps {
   onLaunchConsole: () => void;
   onExploreHistory: () => void;
   onExploreCases: () => void;
-  onExploreTools: () => void;
   investigationCount?: number;
   approvedCount?: number;
   /** When true, primary CTAs open the app instead of auth screens. */
@@ -123,7 +122,6 @@ export function LandingPage({
   onLaunchConsole,
   onExploreHistory,
   onExploreCases,
-  onExploreTools,
   investigationCount = 0,
   approvedCount = 0,
   isAuthenticated = false,
@@ -489,7 +487,7 @@ export function LandingPage({
             <OpsMindLogo className="w-12 h-12 mx-auto" />
             <h2 className="font-heading text-2xl sm:text-4xl text-white">Ready to Investigate?</h2>
             <p className="font-subheading text-sm text-surface-400 max-w-md mx-auto">
-              Launch the operator console, run allowlisted SQL in Tools Lab, or browse approved
+              Launch the operator console or browse approved
               case memory — {investigationCount} investigations run, {approvedCount} approved.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -555,11 +553,6 @@ export function LandingPage({
               <li>
                 <button type="button" onClick={onExploreCases} className="hover:text-accent-400 transition-colors">
                   Case Memory ({approvedCount})
-                </button>
-              </li>
-              <li>
-                <button type="button" onClick={onExploreTools} className="hover:text-accent-400 transition-colors">
-                  Tools Lab
                 </button>
               </li>
             </ul>

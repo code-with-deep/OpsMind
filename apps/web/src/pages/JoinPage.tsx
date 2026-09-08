@@ -88,7 +88,17 @@ export function JoinPage() {
       // Store password in pending state so we can auto-login after approval
       setState({ phase: "pending", email, password, invite_code: inviteCode, request_id: res.request_id });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not submit access request");
+      const msg = err instanceof Error ? err.message : "";
+      const s = msg.toLowerCase();
+      setError(
+        s.includes("invite") && (s.includes("invalid") || s.includes("not found") || s.includes("expired") || s.includes("revoked"))
+          ? "This invite code is invalid or has expired. Ask your admin for a new one."
+          : s.includes("invite") && s.includes("used")
+          ? "This invite code has reached its usage limit. Ask your admin for a new code."
+          : s.includes("email") && s.includes("already")
+          ? "This email is already registered in a workspace. Try signing in instead."
+          : msg || "Could not submit your access request. Please check the invite code and try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -221,9 +231,10 @@ export function JoinPage() {
           />
         </label>
         {error ? (
-          <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2">
-            {error}
-          </p>
+          <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2.5">
+            <span className="shrink-0 mt-0.5">⚠</span>
+            <span>{error}</span>
+          </div>
         ) : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
           Request access

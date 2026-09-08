@@ -45,7 +45,17 @@ export function SignupPage() {
         state: navState?.launchState || undefined,
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Signup failed");
+      const msg = err instanceof Error ? err.message : "";
+      const s = msg.toLowerCase();
+      setError(
+        s.includes("email") && s.includes("already")
+          ? "This email is already registered. Try signing in instead."
+          : s.includes("company") && (s.includes("taken") || s.includes("exists"))
+          ? "That company name is already taken. Please choose a different name."
+          : s.includes("password") && s.includes("short")
+          ? "Password must be at least 8 characters long."
+          : msg || "Could not create your workspace. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -104,9 +114,10 @@ export function SignupPage() {
           />
         </label>
         {error ? (
-          <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2">
-            {error}
-          </p>
+          <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2.5">
+            <span className="shrink-0 mt-0.5">⚠</span>
+            <span>{error}</span>
+          </div>
         ) : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
           Create workspace

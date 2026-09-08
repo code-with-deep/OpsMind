@@ -196,22 +196,89 @@ export function canAccessApp(): boolean {
   return Boolean(getAccessToken());
 }
 
+/** Translate raw API error strings into plain-English user messages. */
+export function humanizeApiError(raw: string): string {
+  if (!raw) return "An unexpected error occurred. Please try again.";
+  const s = raw.toLowerCase();
+
+  // ── Guardrails ──────────────────────────────────────────────────────────
+  if (s.includes("input_guardrail_rejected") || s.includes("jailbreak") || s.includes("injection guardrail"))
+    return "Your question was flagged as potentially unsafe. Please rephrase it and try again.";
+
+  // ── Investigation pipeline ───────────────────────────────────────────────
+  if (s.includes("tenant_data_not_ready") || s.includes("upload company csv"))
+    return "No business data found. Upload a CSV ZIP in Settings before running investigations.";
+  if (s.includes("investigation_in_progress") || (s.includes("already") && s.includes("running")))
+    return "An investigation is already in progress. Please wait for it to finish before starting another.";
+  if (s.includes("fail_soft") || s.includes("could not reach a confident"))
+    return "The investigation couldn't reach a confident answer. Try rephrasing your question or uploading more data.";
+  if (s.includes("max_retries") || s.includes("critic") || s.includes("retry limit"))
+    return "The investigation ran out of retries. Try a more specific question.";
+  if (s.includes("needs_clarification") || s.includes("clarification"))
+    return "The question needs more context. Please be more specific and try again.";
+
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  if (s.includes("incorrect") || s.includes("invalid credentials") || s.includes("wrong password") || (s.includes("401") && s.includes("password")))
+    return "Incorrect email or password. Please check your credentials and try again.";
+  if ((s.includes("email") && s.includes("already")) || s.includes("already registered"))
+    return "This email is already registered. Try signing in instead.";
+  if (s.includes("company") && (s.includes("taken") || s.includes("already exists") || s.includes("already used")))
+    return "That company name is already taken. Please choose a different name.";
+  if (s.includes("invite") && (s.includes("not found") || s.includes("invalid") || s.includes("expired") || s.includes("revoked")))
+    return "This invite code is invalid or has expired. Ask your admin for a new one.";
+  if (s.includes("invite") && s.includes("used"))
+    return "This invite code has already reached its usage limit.";
+  if (s.includes("unauthorized") || (s.includes("401") && !s.includes("password")))
+    return "Your session has expired. Please sign in again.";
+  if (s.includes("forbidden") || s.includes("403"))
+    return "You don't have permission to perform this action. Contact your admin.";
+  if (s.includes("password") && s.includes("short"))
+    return "Password must be at least 8 characters.";
+
+  // ── Upload / data ─────────────────────────────────────────────────────────
+  if (s.includes("413") || (s.includes("size") && s.includes("limit")) || s.includes("too large"))
+    return "The file is too large. Please reduce its size and try again.";
+  if ((s.includes("missing") || s.includes("required")) && (s.includes("products") || s.includes("orders") || s.includes("csv")))
+    return "ZIP is missing required files. Include products.csv, orders.csv, and order_items.csv.";
+  if (s.includes("invalid zip") || s.includes("bad zip") || s.includes("not a zip"))
+    return "The uploaded file is not a valid ZIP. Please check the file and try again.";
+  if (s.includes("playbook") && s.includes("limit"))
+    return "Playbook limit reached. Delete an existing playbook to upload a new one.";
+
+  // ── Network / server ──────────────────────────────────────────────────────
+  if (s.includes("429") || s.includes("rate limit") || s.includes("too many requests"))
+    return "Too many requests. Please wait a moment and try again.";
+  if (s.includes("500") || s.includes("internal server error"))
+    return "The server encountered an unexpected error. Please try again in a moment.";
+  if (s.includes("503") || s.includes("unavailable") || s.includes("service down"))
+    return "Service temporarily unavailable. Please try again shortly.";
+  if (s.includes("network") || s.includes("failed to fetch") || s.includes("econnrefused"))
+    return "Could not reach the server. Check your connection and try again.";
+  if (s.includes("timeout"))
+    return "The request timed out. Please try again.";
+
+  // ── Fallback: strip technical prefixes and show what's left ──────────────
+  const cleaned = raw
+    .replace(/^[a-z_]+:\s*/i, "")        // strip "error_code: " prefix
+    .replace(/\(status \d+\)/gi, "")      // strip "(status 400)"
+    .replace(/HTTP \d{3}\s*/gi, "")       // strip "HTTP 400 "
+    .trim();
+  return cleaned || "An unexpected error occurred. Please try again.";
+}
+
 async function readErrorDetail(response: Response): Promise<string> {
   const raw = await response.text();
-  if (!raw) {
-    return `HTTP ${response.status} ${response.statusText}`;
-  }
+  if (!raw) return humanizeApiError(`HTTP ${response.status}`);
+  let detail = raw;
   try {
     const errorJson = JSON.parse(raw);
-    if (typeof errorJson.detail === "string") return errorJson.detail;
-    if (errorJson.detail?.reason) {
-      return `${errorJson.detail.error}: ${errorJson.detail.reason}`;
-    }
-    if (errorJson.detail) return JSON.stringify(errorJson.detail);
-    return raw;
+    if (typeof errorJson.detail === "string") detail = errorJson.detail;
+    else if (errorJson.detail?.reason) detail = `${errorJson.detail.error}: ${errorJson.detail.reason}`;
+    else if (errorJson.detail) detail = JSON.stringify(errorJson.detail);
   } catch {
-    return raw;
+    detail = raw;
   }
+  return humanizeApiError(detail);
 }
 
 async function request<T>(
@@ -243,9 +310,7 @@ async function request<T>(
   });
 
   if (response.status === 401) {
-    throw new Error(
-      "Unauthorized (401): Please log in or configure a valid API key."
-    );
+    throw new Error("Your session has expired. Please sign in again.");
   }
 
   if (!response.ok) {
@@ -379,7 +444,7 @@ export const api = {
     });
 
     if (response.status === 401) {
-      throw new Error("Unauthorized (401): Please log in or configure a valid API key.");
+      throw new Error("Your session has expired. Please sign in again.");
     }
     if (!response.ok) {
       throw new Error(await readErrorDetail(response));
@@ -397,6 +462,14 @@ export const api = {
 
   async listIngestJobs(): Promise<{ jobs: IngestJobItem[]; count: number }> {
     return request("/data/ingest-jobs");
+  },
+
+  async deleteIngestJob(jobId: string): Promise<{ deleted: boolean; wiped_business_data: boolean; ready: boolean; message: string }> {
+    return request(`/data/ingest-jobs/${jobId}`, { method: "DELETE" });
+  },
+
+  async deleteBusinessData(): Promise<{ deleted: Record<string, number>; ready: boolean; message: string }> {
+    return request("/data/csv", { method: "DELETE" });
   },
 
   async uploadCsv(
@@ -419,7 +492,7 @@ export const api = {
     });
 
     if (response.status === 401) {
-      throw new Error("Unauthorized (401): Please log in or configure a valid API key.");
+      throw new Error("Your session has expired. Please sign in again.");
     }
     if (!response.ok) {
       throw new Error(await readErrorDetail(response));

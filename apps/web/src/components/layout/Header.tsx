@@ -9,7 +9,6 @@ import {
   Menu,
   PlusCircle,
   Settings2,
-  Wrench,
   X,
   Compass,
 } from "lucide-react";
@@ -176,15 +175,6 @@ export function Header({
             </NavLink>
 
             <NavLink
-              to={routes.tools}
-              title="Tools"
-              className={({ isActive }) => navClassName(isActive)}
-            >
-              <Wrench className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden xl:inline">Tools</span>
-            </NavLink>
-
-            <NavLink
               to={routes.settings}
               title="Settings"
               className={({ isActive }) => navClassName(isActive)}
@@ -340,12 +330,6 @@ export function Header({
               </span>
               <span className="font-mono text-xs px-2 py-0.5 rounded-full bg-accent-950 text-accent-300 border border-accent-800/60">
                 {approvedCount}
-              </span>
-            </NavLink>
-
-            <NavLink to={routes.tools} className={({ isActive }) => mobileNavClassName(isActive)}>
-              <span className="flex items-center gap-2.5">
-                <Wrench className="w-4 h-4" /> SQL Tools Lab
               </span>
             </NavLink>
 

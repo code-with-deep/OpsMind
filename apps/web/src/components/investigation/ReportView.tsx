@@ -1,14 +1,16 @@
 import { useState } from "react";
 import {
+  AlertTriangle,
   Check,
+  CheckCircle2,
   Copy,
   ExternalLink,
-  Info,
   Layers,
   ListOrdered,
   Scale,
   Sparkles,
   TrendingDown,
+  XCircle,
 } from "lucide-react";
 import { InvestigationDetail } from "../../types";
 import { Badge } from "../common/Badge";
@@ -16,6 +18,112 @@ import { Button } from "../common/Button";
 import { CitationPill } from "../common/CitationPill";
 import { ConfidenceMeter } from "../common/ConfidenceMeter";
 import { ProseBlock, SectionCard } from "../common/AppUI";
+
+// ── Critic Verdict Card ────────────────────────────────────────────────────
+
+interface CriticVerdictCardProps {
+  critique: InvestigationDetail["critique"];
+}
+
+const VERDICT_CONFIG = {
+  pass: {
+    icon: <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />,
+    label: "Passed",
+    labelClass: "text-emerald-400",
+    borderClass: "border-emerald-800/50",
+    bgClass: "bg-emerald-950/25",
+    headline: "All claims are fully verified.",
+    body: "Every number and recommendation in this report is directly backed by SQL query results or SOP playbook evidence. You can act on this with confidence.",
+  },
+  fail_soft: {
+    icon: <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />,
+    label: "Soft Fail",
+    labelClass: "text-amber-400",
+    borderClass: "border-amber-800/50",
+    bgClass: "bg-amber-950/20",
+    headline: "Some claims could not be fully verified.",
+    body: "The Critic checked the report twice and found that not all numbers or recommendations could be traced back to SQL data or playbooks. The report shows the best available answer — review it carefully before acting.",
+  },
+  retry: {
+    icon: <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />,
+    label: "Retried",
+    labelClass: "text-amber-400",
+    borderClass: "border-amber-800/50",
+    bgClass: "bg-amber-950/20",
+    headline: "The Critic flagged issues and the pipeline retried.",
+    body: "One or more verification checks failed. The pipeline automatically retried and produced an improved answer. Review the findings below before acting.",
+  },
+} as const;
+
+function CriticVerdictCard({ critique }: CriticVerdictCardProps) {
+  if (!critique) {
+    // Pipeline didn't reach the Critic (e.g. unsupported question / guardrail rejection)
+    return (
+      <div className="app-card p-4 flex items-start gap-3 border border-surface-700/60">
+        <XCircle className="w-4 h-4 shrink-0 text-surface-500 mt-0.5" />
+        <div className="min-w-0 space-y-1">
+          <div className="flex items-center gap-2">
+            <Scale className="w-3.5 h-3.5 text-surface-500" />
+            <span className="text-sm font-medium text-surface-400">Critic — Not evaluated</span>
+          </div>
+          <p className="text-sm text-surface-500 leading-relaxed">
+            The investigation did not reach the verification stage. This usually means the question
+            was outside the supported domain or was blocked by the input guardrail.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const cfg = VERDICT_CONFIG[critique.decision] ?? VERDICT_CONFIG.pass;
+  const hasGaps = critique.gaps && critique.gaps.length > 0;
+
+  return (
+    <div className={`app-card p-4 space-y-3 border ${cfg.borderClass} ${cfg.bgClass}`}>
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Scale className="w-4 h-4 text-surface-400" />
+          <span className="text-sm font-medium text-surface-300">Critic Verdict</span>
+        </div>
+        <div className={`flex items-center gap-1.5 text-xs font-semibold ${cfg.labelClass}`}>
+          {cfg.icon}
+          {cfg.label}
+        </div>
+      </div>
+
+      {/* Verdict explanation */}
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-surface-100">{cfg.headline}</p>
+        <p className="text-sm text-surface-400 leading-relaxed">{cfg.body}</p>
+      </div>
+
+      {/* Critic notes (if any) */}
+      {critique.notes && (
+        <p className="text-xs text-surface-400 italic border-l-2 border-surface-700 pl-3 leading-relaxed">
+          {critique.notes}
+        </p>
+      )}
+
+      {/* What the Critic flagged (gaps) */}
+      {hasGaps && (
+        <div className="space-y-1.5 pt-1 border-t border-surface-800/60">
+          <p className="text-xs font-medium text-surface-400 uppercase tracking-wide">
+            What the Critic flagged
+          </p>
+          <ul className="space-y-1">
+            {critique.gaps.map((gap, idx) => (
+              <li key={idx} className="flex items-start gap-2 text-xs text-surface-400 leading-relaxed">
+                <span className="shrink-0 text-amber-500 mt-0.5">•</span>
+                <span>{gap}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ReportViewProps {
   investigation: InvestigationDetail;
@@ -188,33 +296,7 @@ export function ReportView({
         </SectionCard>
       )}
 
-      {(rec?.assumptions?.length || critique?.notes) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {rec?.assumptions && rec.assumptions.length > 0 && (
-            <div className="app-card p-4 space-y-2">
-              <div className="flex items-center gap-2 text-amber-400 text-sm font-medium">
-                <Info className="w-4 h-4" />
-                Assumptions
-              </div>
-              <ul className="space-y-1.5 text-sm text-surface-300 list-disc list-inside leading-relaxed">
-                {rec.assumptions.map((asm, idx) => (
-                  <li key={idx}>{asm}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {critique?.notes && (
-            <div className="app-card p-4 space-y-2">
-              <div className="flex items-center gap-2 text-accent-400 text-sm font-medium">
-                <Scale className="w-4 h-4" />
-                Critic Notes
-              </div>
-              <p className="text-sm text-surface-300 leading-relaxed">{critique.notes}</p>
-            </div>
-          )}
-        </div>
-      )}
+      <CriticVerdictCard critique={critique} />
     </div>
   );
 }

@@ -49,31 +49,101 @@ function toAppNotice(raw: string): AppNotice {
   const text = (raw || "").trim();
   const lower = text.toLowerCase();
 
+  // ── Data readiness ────────────────────────────────────────────────────────
   if (
     lower.includes("tenant_data_not_ready") ||
     lower.includes("upload company csv") ||
+    lower.includes("no business data") ||
     (lower.includes("products.csv") && lower.includes("orders.csv"))
   ) {
     return {
       title: "Business data required",
-      body: "Upload a company data ZIP in Settings before running investigations. Include at least products.csv, orders.csv, and order_items.csv. A playbook (.md) is recommended for SOP-backed answers.",
+      body: "Upload a company data ZIP in Settings before running investigations. Include products.csv, orders.csv, and order_items.csv.",
       actionTo: routes.settings,
       actionLabel: "Go to Settings",
     };
   }
 
-  if (lower.includes("unauthorized") || lower.includes("401")) {
+  // ── Guardrails ────────────────────────────────────────────────────────────
+  if (
+    lower.includes("guardrail") ||
+    lower.includes("jailbreak") ||
+    lower.includes("injection") ||
+    lower.includes("flagged as potentially")
+  ) {
     return {
-      title: "Sign in required",
-      body: "Your session expired or is missing. Sign in again to continue.",
+      title: "Question flagged",
+      body: "Your question was flagged as potentially unsafe. Please rephrase it — avoid instructions, code, or requests that aren't operations questions.",
+    };
+  }
+
+  // ── Investigation pipeline failures ───────────────────────────────────────
+  if (lower.includes("investigation_in_progress") || lower.includes("already in progress")) {
+    return {
+      title: "Investigation already running",
+      body: "An investigation is already in progress for your workspace. Wait for it to finish before starting another.",
+    };
+  }
+
+  if (lower.includes("fail_soft") || lower.includes("could not reach a confident") || lower.includes("ran out of retries")) {
+    return {
+      title: "Investigation incomplete",
+      body: "The agents couldn't reach a confident answer. Try rephrasing your question or uploading more business data and playbooks.",
+    };
+  }
+
+  if (lower.includes("needs_clarification") || lower.includes("more context")) {
+    return {
+      title: "Question needs more detail",
+      body: "The question was too broad or ambiguous. Add specifics like a date range, product category, or region.",
+    };
+  }
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  if (lower.includes("session has expired") || lower.includes("unauthorized") || lower.includes("sign in again")) {
+    return {
+      title: "Session expired",
+      body: "Your session has expired. Please sign in again to continue.",
       actionTo: routes.login,
       actionLabel: "Sign in",
     };
   }
 
+  if (lower.includes("don't have permission") || lower.includes("forbidden")) {
+    return {
+      title: "Access denied",
+      body: "You don't have permission to perform this action. Contact your workspace admin.",
+      actionTo: routes.settings,
+      actionLabel: "Go to Settings",
+    };
+  }
+
+  // ── Network / server ──────────────────────────────────────────────────────
+  if (lower.includes("could not reach the server") || lower.includes("network") || lower.includes("econnrefused")) {
+    return {
+      title: "Connection problem",
+      body: "Could not reach the server. Check your network connection and try again.",
+    };
+  }
+
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return {
+      title: "Request timed out",
+      body: "The investigation took too long to respond. Please try again.",
+    };
+  }
+
+  if (lower.includes("server encountered an unexpected") || lower.includes("500")) {
+    return {
+      title: "Server error",
+      body: "The server encountered an unexpected error. Please try again in a moment.",
+    };
+  }
+
+  // ── Generic fallback ──────────────────────────────────────────────────────
   return {
     title: "Something went wrong",
-    body: text || "An unexpected error occurred. Try again or check Settings.",
+    body: text || "An unexpected error occurred. Try again or contact support.",
   };
 }
 
@@ -122,6 +192,18 @@ export function AppShell() {
       setGlobalError(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  /** Silently refresh investigation data without triggering the loading spinner.
+   *  Used after review submission so the "Saved" badge updates without showing
+   *  the "Running Investigation" screen. */
+  const refreshDetailSilent = async (id: string) => {
+    try {
+      const detail = await api.getInvestigation(id);
+      setCurrentInvestigation(detail);
+    } catch {
+      // Non-critical: user already sees the submitted state; swallow quietly.
     }
   };
 
@@ -191,7 +273,8 @@ export function AppShell() {
     setGlobalError(null);
     try {
       await api.submitReview(currentInvestigation.id, payload);
-      await loadDetail(currentInvestigation.id);
+      // Use silent refresh — avoids triggering the full-page "Running Investigation" spinner
+      await refreshDetailSilent(currentInvestigation.id);
       await loadHistory();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to submit operator review.";

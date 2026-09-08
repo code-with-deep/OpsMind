@@ -41,7 +41,15 @@ export function LoginPage() {
         state: navState?.launchState || undefined,
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      const msg = err instanceof Error ? err.message : "";
+      const s = msg.toLowerCase();
+      setError(
+        s.includes("incorrect") || s.includes("credentials") || s.includes("password") || s.includes("401")
+          ? "Incorrect email or password. Please try again."
+          : s.includes("not found") || s.includes("no account")
+          ? "No account found with that email. Check the address or sign up."
+          : msg || "Sign-in failed. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -98,9 +106,10 @@ export function LoginPage() {
           />
         </label>
         {error ? (
-          <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2">
-            {error}
-          </p>
+          <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2.5">
+            <span className="shrink-0 mt-0.5">⚠</span>
+            <span>{error}</span>
+          </div>
         ) : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
           Sign in

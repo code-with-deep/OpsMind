@@ -5,7 +5,6 @@ import { LandingPageRoute } from "./pages/LandingPageRoute";
 import { ConsolePage } from "./pages/ConsolePage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { CasesPage } from "./pages/CasesPage";
-import { ToolsPage } from "./pages/ToolsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { JoinPage } from "./pages/JoinPage";
@@ -31,7 +30,6 @@ export function App() {
         <Route path="/console/:investigationId/:subView" element={<ConsolePage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/cases" element={<CasesPage />} />
-        <Route path="/tools" element={<ToolsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 

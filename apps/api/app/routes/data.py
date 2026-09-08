@@ -20,6 +20,17 @@ from opsmind.db.ingest_csv import (
     ingest_csv_tables,
     tenant_data_ready,
 )
+from opsmind.db.models import (
+    Campaign,
+    Carrier,
+    DailyMetric,
+    InventorySnapshot,
+    Order,
+    OrderItem,
+    Product,
+    Return,
+    Shipment,
+)
 from opsmind.db.tenant_models import IngestJob, TenantSettings
 from opsmind.domain.tenant import TenantContext
 from opsmind.guardrails.output import sanitize_output_payload
@@ -161,5 +172,119 @@ async def upload_csv_bundle(
             "job": _job_payload(job),
             "ready": ready,
             "message": "Business data replaced for this tenant and daily_metrics derived.",
+        }
+    )
+
+
+@router.delete("/ingest-jobs/{job_id}")
+def delete_ingest_job(
+    job_id: uuid.UUID,
+    tenant: TenantContext = Depends(require_admin),
+    session: Session = Depends(get_tenant_session),
+) -> dict[str, Any]:
+    """Delete a single ingest job record and its uploaded ZIP file.
+
+    If this was the last completed job, also wipes all ingested business data
+    so the ready-gate resets and the admin must re-upload.
+    """
+    job = session.get(IngestJob, job_id)
+    if job is None or job.tenant_id != tenant.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Remove the uploaded ZIP from disk (best-effort)
+    upload_dir = DEFAULT_UPLOADS / str(tenant.tenant_id) / "csv"
+    if job.filename and upload_dir.exists():
+        import glob as _glob
+        for f in _glob.glob(str(upload_dir / f"*_{job.filename}")):
+            try:
+                Path(f).unlink()
+            except Exception:  # noqa: BLE001
+                pass
+
+    # Delete the job record
+    session.delete(job)
+    session.flush()
+
+    # If no other "done" jobs remain, wipe the business tables so ready resets
+    remaining_done = session.scalars(
+        select(IngestJob).where(
+            IngestJob.tenant_id == tenant.tenant_id,
+            IngestJob.status == "done",
+        )
+    ).all()
+
+    wiped = False
+    if not remaining_done:
+        for model in [
+            Return, Shipment, InventorySnapshot, OrderItem,
+            Order, Campaign, Carrier, Product, DailyMetric,
+        ]:
+            rows = session.scalars(
+                select(model).where(model.tenant_id == tenant.tenant_id)  # type: ignore[attr-defined]
+            ).all()
+            for row in rows:
+                session.delete(row)
+        wiped = True
+
+    session.commit()
+    ready = tenant_data_ready(session, tenant.tenant_id)
+    return sanitize_output_payload({
+        "deleted": True,
+        "wiped_business_data": wiped,
+        "ready": ready["ready"],
+        "message": "Job deleted. Business data also cleared — upload a new ZIP to re-enable investigations." if wiped else "Job deleted.",
+    })
+
+
+@router.delete("/csv")
+def delete_csv_data(
+    tenant: TenantContext = Depends(require_admin),
+    session: Session = Depends(get_tenant_session),
+) -> dict[str, Any]:
+    """Delete all business data for this tenant (admin only).
+
+    Wipes products, orders, order_items, shipments, returns, inventory,
+    carriers, campaigns, daily_metrics, and ingest_jobs — resets the
+    ready-gate so the admin can re-upload a corrected dataset.
+    """
+    tid = tenant.tenant_id
+
+    # Delete in FK-safe order (children before parents)
+    deleted: dict[str, int] = {}
+    for model, label in [
+        (Return, "returns"),
+        (Shipment, "shipments"),
+        (InventorySnapshot, "inventory_snapshots"),
+        (OrderItem, "order_items"),
+        (Order, "orders"),
+        (Campaign, "campaigns"),
+        (Carrier, "carriers"),
+        (Product, "products"),
+        (DailyMetric, "daily_metrics"),
+        (IngestJob, "ingest_jobs"),
+    ]:
+        rows = session.scalars(
+            select(model).where(model.tenant_id == tid)  # type: ignore[attr-defined]
+        ).all()
+        for row in rows:
+            session.delete(row)
+        deleted[label] = len(rows)
+
+    session.commit()
+
+    # Also remove uploaded ZIP files from disk (best-effort, non-fatal)
+    upload_dir = DEFAULT_UPLOADS / str(tid) / "csv"
+    if upload_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(upload_dir)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return sanitize_output_payload(
+        {
+            "deleted": deleted,
+            "ready": False,
+            "message": "All business data deleted. Upload a new CSV ZIP to re-enable investigations.",
         }
     )

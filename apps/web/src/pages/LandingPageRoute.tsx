@@ -53,7 +53,6 @@ export function LandingPageRoute() {
           onLaunchConsole={() => goAuthenticated(routes.console)}
           onExploreHistory={() => goAuthenticated(routes.history)}
           onExploreCases={() => goAuthenticated(routes.cases)}
-          onExploreTools={() => goAuthenticated(routes.tools)}
           investigationCount={investigationCount}
           approvedCount={approvedCount}
         />

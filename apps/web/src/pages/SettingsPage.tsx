@@ -16,6 +16,8 @@ import {
 import { PageHeader } from "../components/common/PageHeader";
 import { Button } from "../components/common/Button";
 import { Badge } from "../components/common/Badge";
+import { ToastContainer } from "../components/common/Toast";
+import { useToast } from "../hooks/useToast";
 import {
   AccessRequest,
   AccessUser,
@@ -45,8 +47,12 @@ export function SettingsPage() {
   const [savingCompany, setSavingCompany] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [csvUploading, setCsvUploading] = useState(false);
+  // per-row delete tracking — stores the id being deleted so only that row shows spinner
+  const [csvDeletingId, setCsvDeletingId] = useState<string | null>(null);
+  const [playbookDeletingId, setPlaybookDeletingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+  const { toasts, toast, dismiss } = useToast();
 
   // Access management state
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
@@ -92,6 +98,24 @@ export function SettingsPage() {
     }
   };
 
+  /** Silently refresh only access management data (requests + users + invites).
+   *  Called on a polling interval so admins see status changes without a manual refresh. */
+  const refreshAccessSilent = async () => {
+    if (!isAdmin) return;
+    try {
+      const [inv, requests, users] = await Promise.all([
+        api.listInvites(),
+        api.listAccessRequests("all"),
+        api.listAccessUsers("all"),
+      ]);
+      setInvites(inv.invites || []);
+      setAccessRequests(requests.requests || []);
+      setAccessUsers(users.users || []);
+    } catch {
+      // Non-critical background poll — swallow errors silently
+    }
+  };
+
   useEffect(() => {
     void load();
     // Scroll to #access if anchor is present
@@ -102,40 +126,80 @@ export function SettingsPage() {
     }
   }, []);
 
+  // Poll access management every 12 seconds so:
+  // - Admins see new pending requests and status changes in real-time
+  // - Non-admins see their own status update (active → revoked) without a manual refresh
+  useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(async () => {
+      if (isAdmin) {
+        await refreshAccessSilent();
+      } else {
+        // For regular members: silently refresh their own profile so role/status stays current
+        try {
+          const me = await api.me();
+          setUser(me.user);
+          setStoredUser(me.user);
+        } catch {
+          // Session may have expired — RequireAuth will handle redirect
+        }
+      }
+    }, 12_000);
+
+    return () => clearInterval(interval);
+  }, [isAdmin, user]);
+
   const createInvite = async () => {
     setCreating(true);
-    setError(null);
     setFreshCode(null);
     try {
       const res = await api.createInvite();
       setFreshCode(res.invite.code);
       await load();
+      toast("Invite code generated — copy it and share with your teammate.", "success");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create invite");
+      const msg = err instanceof Error ? err.message : "";
+      toast(
+        msg.includes("limit")
+          ? "Invite limit reached. Revoke an existing code first."
+          : "Could not generate invite code. Please try again.",
+        "error"
+      );
     } finally {
       setCreating(false);
     }
   };
 
   const revoke = async (id: string) => {
-    setError(null);
     try {
       await api.revokeInvite(id);
-      await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to revoke invite");
+      // Fetch fresh invite list directly so we can check the banner synchronously
+      const freshInvites = await api.listInvites();
+      setInvites(freshInvites.invites || []);
+      toast("Invite code revoked.", "success");
+      // Clear the "Copy now" banner if the freshCode no longer belongs to an active invite
+      setFreshCode((prev) => {
+        if (!prev) return null;
+        const stillActive = (freshInvites.invites || []).some(
+          (inv) => inv.active && prev.startsWith(inv.code_prefix)
+        );
+        return stillActive ? prev : null;
+      });
+    } catch {
+      toast("Could not revoke the invite code. Please try again.", "error");
     }
   };
 
   const copyCode = async () => {
     if (!freshCode) return;
     await navigator.clipboard.writeText(freshCode);
+    toast("Invite code copied to clipboard.", "success");
   };
 
   const saveCompany = async () => {
     if (!companyName.trim()) return;
     setSavingCompany(true);
-    setError(null);
     try {
       const res = await api.updateTenant({ name: companyName.trim() });
       if (user) {
@@ -146,8 +210,15 @@ export function SettingsPage() {
         setUser(next);
         setStoredUser(next);
       }
+      toast("Company name saved.", "success");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to update company");
+      const msg = err instanceof Error ? err.message : "";
+      toast(
+        msg.includes("already") || msg.includes("taken")
+          ? "That company name is already taken. Choose a different name."
+          : "Could not save company name. Please try again.",
+        "error"
+      );
     } finally {
       setSavingCompany(false);
     }
@@ -156,12 +227,20 @@ export function SettingsPage() {
   const onPickFile = async (file: File | null) => {
     if (!file) return;
     setUploading(true);
-    setError(null);
     try {
       await api.uploadPlaybook(file);
       await load();
+      toast(`"${file.name}" uploaded and indexed for investigations.`, "success");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to upload playbook");
+      const msg = err instanceof Error ? err.message : "";
+      toast(
+        msg.includes("limit") || msg.includes("size")
+          ? "File is too large. Maximum upload size exceeded."
+          : msg.includes("format") || msg.includes("type")
+          ? "Unsupported file type. Please upload a Markdown (.md) or plain text file."
+          : `Failed to upload playbook: ${msg || "please try again."}`,
+        "error"
+      );
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -171,67 +250,96 @@ export function SettingsPage() {
   const onPickCsv = async (file: File | null) => {
     if (!file) return;
     setCsvUploading(true);
-    setError(null);
     try {
       await api.uploadCsv(file);
       await load();
+      toast(`"${file.name}" uploaded and ingested. Investigations are now unlocked.`, "success");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to upload CSV");
+      const msg = err instanceof Error ? err.message : "";
+      toast(
+        msg.includes("413") || msg.includes("size") || msg.includes("limit")
+          ? "ZIP file is too large. Reduce file size and try again."
+          : msg.includes("products") || msg.includes("orders") || msg.includes("csv")
+          ? "ZIP is missing required files. Include products.csv, orders.csv, and order_items.csv."
+          : `Upload failed: ${msg || "please check the file and try again."}`,
+        "error"
+      );
     } finally {
       setCsvUploading(false);
       if (csvRef.current) csvRef.current.value = "";
     }
   };
 
-  const removePlaybook = async (id: string) => {
-    setError(null);
+  const onDeleteIngestJob = async (jobId: string) => {
+    setCsvDeletingId(jobId);
+    try {
+      const res = await api.deleteIngestJob(jobId);
+      await load();
+      toast(
+        res.wiped_business_data
+          ? "Data file deleted. Business data cleared — upload a new ZIP to re-enable investigations."
+          : "Data file removed.",
+        "success"
+      );
+    } catch {
+      toast("Could not delete the data file. Please try again.", "error");
+    } finally {
+      setCsvDeletingId(null);
+    }
+  };
+
+  const removePlaybook = async (id: string, title: string) => {
+    setPlaybookDeletingId(id);
     try {
       await api.deletePlaybook(id);
       await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete playbook");
+      toast(`"${title}" removed from playbooks.`, "success");
+    } catch {
+      toast("Could not delete the playbook. Please try again.", "error");
+    } finally {
+      setPlaybookDeletingId(null);
     }
   };
 
   // ── Access management actions ──────────────────────────────────────────────
 
-  const approveRequest = async (id: string) => {
+  const approveRequest = async (id: string, email: string) => {
     setAccessActionLoading(id);
-    setError(null);
     try {
       await api.approveAccessRequest(id);
       await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to approve request");
+      toast(`Access approved for ${email}.`, "success");
+    } catch {
+      toast("Could not approve the request. Please try again.", "error");
     } finally {
       setAccessActionLoading(null);
     }
   };
 
-  const rejectRequest = async (id: string) => {
+  const rejectRequest = async (id: string, email: string) => {
     setAccessActionLoading(id);
-    setError(null);
     try {
       await api.rejectAccessRequest(id, rejectReason.trim() || undefined);
       setRejectingId(null);
       setRejectReason("");
       await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to reject request");
+      toast(`Access request from ${email} rejected.`, "info");
+    } catch {
+      toast("Could not reject the request. Please try again.", "error");
     } finally {
       setAccessActionLoading(null);
     }
   };
 
-  const revokeUser = async (userId: string) => {
+  const revokeUser = async (userId: string, email: string) => {
     setAccessActionLoading(userId);
-    setError(null);
     try {
       await api.revokeUserAccess(userId);
       setRevokeConfirmId(null);
       await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to revoke access");
+      toast(`Access revoked for ${email}.`, "success");
+    } catch {
+      toast("Could not revoke access. Please try again.", "error");
     } finally {
       setAccessActionLoading(null);
     }
@@ -243,6 +351,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-5 animate-fadeIn">
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
       <PageHeader
         icon={<Settings2 className="w-5 h-5" />}
         title="Settings"
@@ -250,8 +359,17 @@ export function SettingsPage() {
       />
 
       {error ? (
-        <div className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-xl px-3 py-2">
-          {error}
+        <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-xl px-3 py-2.5">
+          <span className="shrink-0 mt-0.5">⚠</span>
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="ml-auto shrink-0 opacity-60 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       ) : null}
 
@@ -389,9 +507,22 @@ export function SettingsPage() {
                           : job.error || "—"}
                       </p>
                     </div>
-                    <p className="text-xs text-surface-500 shrink-0">
-                      {job.created_at ? new Date(job.created_at).toLocaleString() : ""}
-                    </p>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <p className="text-xs text-surface-500">
+                        {job.created_at ? new Date(job.created_at).toLocaleString() : ""}
+                      </p>
+                      {isAdmin ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<Trash2 className="w-3.5 h-3.5" />}
+                          loading={csvDeletingId === job.id}
+                          onClick={() => void onDeleteIngestJob(job.id)}
+                        >
+                          Delete
+                        </Button>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -462,7 +593,8 @@ export function SettingsPage() {
                         variant="ghost"
                         size="sm"
                         icon={<Trash2 className="w-3.5 h-3.5" />}
-                        onClick={() => void removePlaybook(pb.id)}
+                        loading={playbookDeletingId === pb.id}
+                        onClick={() => void removePlaybook(pb.id, pb.title)}
                       >
                         Delete
                       </Button>
@@ -644,7 +776,7 @@ export function SettingsPage() {
                               size="sm"
                               icon={<Check className="w-3.5 h-3.5" />}
                               loading={accessActionLoading === req.id}
-                              onClick={() => void approveRequest(req.id)}
+                              onClick={() => void approveRequest(req.id, req.requester_email)}
                             >
                               Approve
                             </Button>
@@ -677,9 +809,9 @@ export function SettingsPage() {
                                 size="sm"
                                 className="text-rose-400 hover:text-rose-300 border border-rose-800/60"
                                 loading={accessActionLoading === req.id}
-                                onClick={() => void rejectRequest(req.id)}
-                              >
-                                Confirm reject
+                              onClick={() => void rejectRequest(req.id, req.requester_email)}
+                            >
+                              Confirm reject
                               </Button>
                               <Button
                                 variant="ghost"
@@ -737,7 +869,7 @@ export function SettingsPage() {
                                   size="sm"
                                   className="text-rose-400 hover:text-rose-300 border border-rose-800/60"
                                   loading={accessActionLoading === u.id}
-                                  onClick={() => void revokeUser(u.id)}
+                                  onClick={() => void revokeUser(u.id, u.email)}
                                 >
                                   Yes, revoke
                                 </Button>

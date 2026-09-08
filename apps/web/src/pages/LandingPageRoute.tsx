@@ -51,9 +51,6 @@ export function LandingPageRoute() {
             authenticated ? navigate(routes.console) : navigate(routes.login)
           }
           onLaunchConsole={() => goAuthenticated(routes.console)}
-          onSelectScenario={(question) =>
-            goAuthenticated(routes.console, { launchQuestion: question })
-          }
           onExploreHistory={() => goAuthenticated(routes.history)}
           onExploreCases={() => goAuthenticated(routes.cases)}
           onExploreTools={() => goAuthenticated(routes.tools)}

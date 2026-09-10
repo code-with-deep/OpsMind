@@ -21,6 +21,7 @@ def create_access_token(
     email: str,
     role: str,
     expire_hours: int = 72,
+    token_version: int = 0,
 ) -> str:
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
@@ -28,6 +29,7 @@ def create_access_token(
         "tenant_id": str(tenant_id),
         "email": email,
         "role": role,
+        "tv": int(token_version),
         "iat": now,
         "nbf": now,
         "exp": now + timedelta(hours=max(1, expire_hours)),

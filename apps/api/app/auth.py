@@ -140,6 +140,16 @@ def resolve_tenant_from_jwt(session: Session, token: str) -> TenantContext:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account access has been revoked.",
         )
+
+    token_tv = int(payload.get("tv") or 0)
+    user_tv = int(user.token_version or 0)
+    if token_tv != user_tv:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired — please log in again",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return TenantContext(
         tenant_id=tenant.id,
         tenant_slug=tenant.slug,

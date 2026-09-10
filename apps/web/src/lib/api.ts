@@ -388,6 +388,42 @@ export const api = {
     return request<{ user: AuthUser }>("/auth/me");
   },
 
+  async changePassword(payload: {
+    current_password: string;
+    new_password: string;
+  }): Promise<AuthResponse> {
+    const res = await request<AuthResponse>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return persistAuth(res);
+  },
+
+  async forgotPassword(payload: { email: string }): Promise<{ message: string }> {
+    return request<{ message: string }>(
+      "/auth/forgot-password",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      { auth: false },
+    );
+  },
+
+  async resetPassword(payload: {
+    token: string;
+    new_password: string;
+  }): Promise<{ message: string }> {
+    return request<{ message: string }>(
+      "/auth/reset-password",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      { auth: false },
+    );
+  },
+
   async updateTenant(payload: { name: string }): Promise<{
     tenant: { id: string; name: string; slug: string };
   }> {

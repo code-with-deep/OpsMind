@@ -55,7 +55,7 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
         state={{
           from: location.pathname + location.search,
           notice:
-            "Sign in with your company account to open the console. An API key alone is not enough.",
+            "Sign in with your company account to open the console.",
         }}
       />
     );

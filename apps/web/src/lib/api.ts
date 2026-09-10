@@ -229,7 +229,7 @@ export function humanizeApiError(raw: string): string {
   if (s.includes("invite") && s.includes("used"))
     return "This invite code has already reached its usage limit.";
   if (s.includes("unauthorized") || (s.includes("401") && !s.includes("password")))
-    return "Your session has expired. Please sign in again.";
+    return "Invalid email or password.";
   if (s.includes("forbidden") || s.includes("403"))
     return "You don't have permission to perform this action. Contact your admin.";
   if (s.includes("password") && s.includes("short"))
@@ -310,7 +310,7 @@ async function request<T>(
   });
 
   if (response.status === 401) {
-    throw new Error("Your session has expired. Please sign in again.");
+    throw new Error("Invalid email or password.");
   }
 
   if (!response.ok) {

@@ -75,6 +75,10 @@ export function SignupPage() {
           >
             Sign in
           </Link>
+          {" · "}
+          <Link to={routes.forgotPassword} className="text-accent-400 hover:text-accent-300">
+            Forgot password?
+          </Link>
         </p>
       }
     >

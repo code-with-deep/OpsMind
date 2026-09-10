@@ -15,21 +15,38 @@ from sqlalchemy.orm import Session
 from api.app.auth import require_admin, require_tenant_context, require_user_session
 from api.app.config import get_settings
 from api.app.deps import get_tenant_session
+from opsmind.auth.email import build_password_reset_email, send_email
 from opsmind.auth.invites import (
     generate_invite_code,
     hash_invite_code,
     invite_prefix,
 )
 from opsmind.auth.jwt_tokens import create_access_token
+from opsmind.auth.password_reset import (
+    generate_reset_token,
+    hash_reset_token,
+    reset_token_prefix,
+)
 from opsmind.auth.passwords import hash_password, verify_password
 from opsmind.db.session import get_owner_session_factory
-from opsmind.db.tenant_models import AccessRequest, InviteCode, Notification, Tenant, TenantSettings, User
+from opsmind.db.tenant_models import (
+    AccessRequest,
+    InviteCode,
+    Notification,
+    PasswordResetToken,
+    Tenant,
+    TenantSettings,
+    User,
+)
 from opsmind.domain.tenant import TenantContext
 from opsmind.guardrails.output import sanitize_output_payload
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
+_FORGOT_GENERIC = (
+    "If an account exists for that email, we sent a password reset link."
+)
 
 
 def _slugify(name: str) -> str:
@@ -73,6 +90,7 @@ def _issue_token(user: User, tenant: Tenant) -> dict[str, Any]:
         email=user.email,
         role=user.role,
         expire_hours=settings.jwt_expire_hours,
+        token_version=int(user.token_version or 0),
     )
     return {
         "access_token": token,
@@ -80,6 +98,28 @@ def _issue_token(user: User, tenant: Tenant) -> dict[str, Any]:
         "expires_in_hours": settings.jwt_expire_hours,
         "user": _user_payload(user, tenant),
     }
+
+
+def _revoke_open_reset_tokens(session: Session, user_id: uuid.UUID) -> None:
+    now = datetime.now(timezone.utc)
+    rows = session.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.used_at.is_(None),
+        )
+    ).all()
+    for row in rows:
+        row.used_at = now
+
+
+def _set_password(session: Session, user: User, new_password: str) -> None:
+    try:
+        user.password_hash = hash_password(new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    user.password_changed_at = datetime.now(timezone.utc)
+    user.token_version = int(user.token_version or 0) + 1
+    _revoke_open_reset_tokens(session, user.id)
 
 
 class SignupBody(BaseModel):
@@ -97,6 +137,20 @@ class JoinInviteBody(BaseModel):
     invite_code: str = Field(min_length=6, max_length=64)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+
+
+class ChangePasswordBody(BaseModel):
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class ForgotPasswordBody(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordBody(BaseModel):
+    token: str = Field(min_length=16, max_length=256)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class CreateInviteBody(BaseModel):
@@ -218,6 +272,160 @@ def me(tenant: TenantContext = Depends(require_user_session)) -> dict[str, Any]:
         if user is None or t is None:
             raise HTTPException(status_code=401, detail="Session invalid")
         return sanitize_output_payload({"user": _user_payload(user, t)})
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordBody,
+    tenant: TenantContext = Depends(require_user_session),
+) -> dict[str, Any]:
+    """Logged-in user changes password (Settings). Returns a fresh JWT."""
+    if body.new_password == body.current_password:
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be different from the current password",
+        )
+    settings = get_settings()
+    factory = get_owner_session_factory(settings.database_url_sync)
+    with factory() as session:
+        row = session.execute(
+            select(User, Tenant)
+            .join(Tenant, Tenant.id == User.tenant_id)
+            .where(User.id == tenant.user_id, User.tenant_id == tenant.tenant_id)
+        ).first()
+        if row is None:
+            raise HTTPException(status_code=401, detail="Session invalid")
+        user, t = row
+        if not verify_password(body.current_password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect",
+            )
+        _set_password(session, user, body.new_password)
+        session.commit()
+        session.refresh(user)
+        session.refresh(t)
+        return sanitize_output_payload(_issue_token(user, t))
+
+
+@router.post("/forgot-password")
+def forgot_password(body: ForgotPasswordBody) -> dict[str, Any]:
+    """Request a password-reset email. Always returns a generic message."""
+    settings = get_settings()
+    email = str(body.email).strip().lower()
+    factory = get_owner_session_factory(settings.database_url_sync)
+    generic = {"message": _FORGOT_GENERIC}
+
+    with factory() as session:
+        row = session.execute(
+            select(User, Tenant)
+            .join(Tenant, Tenant.id == User.tenant_id)
+            .where(User.email == email)
+        ).first()
+        if row is None:
+            return sanitize_output_payload(generic)
+
+        user, t = row
+        if not user.password_hash or t.status != "active":
+            return sanitize_output_payload(generic)
+
+        now = datetime.now(timezone.utc)
+        hour_ago = now - timedelta(hours=1)
+        recent = session.scalar(
+            select(func.count())
+            .select_from(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.created_at >= hour_ago,
+            )
+        ) or 0
+        if int(recent) >= settings.auth_password_reset_max_per_hour:
+            return sanitize_output_payload(generic)
+
+        raw = generate_reset_token()
+        ttl = max(5, int(settings.auth_password_reset_ttl_minutes))
+        token_row = PasswordResetToken(
+            id=uuid.uuid4(),
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            token_hash=hash_reset_token(raw),
+            token_prefix=reset_token_prefix(raw),
+            expires_at=now + timedelta(minutes=ttl),
+        )
+        session.add(token_row)
+        session.commit()
+
+        base = (settings.app_public_url or "http://localhost:3000").rstrip("/")
+        reset_url = f"{base}/reset-password?token={raw}"
+        subject, text_body = build_password_reset_email(
+            reset_url=reset_url,
+            ttl_minutes=ttl,
+            app_name=settings.app_name or "OpsMind",
+        )
+        try:
+            send_email(
+                to_address=user.email,
+                subject=subject,
+                body_text=text_body,
+                from_address=settings.email_from,
+                smtp_host=settings.smtp_host,
+                smtp_port=settings.smtp_port,
+                smtp_username=settings.smtp_username,
+                smtp_password=settings.smtp_password,
+                smtp_use_tls=settings.smtp_use_tls,
+            )
+        except Exception:
+            return sanitize_output_payload(generic)
+
+    return sanitize_output_payload(generic)
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordBody) -> dict[str, Any]:
+    """Consume a reset token and set a new password. User must log in after."""
+    settings = get_settings()
+    raw = body.token.strip()
+    factory = get_owner_session_factory(settings.database_url_sync)
+
+    with factory() as session:
+        token_row = session.scalar(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == hash_reset_token(raw),
+                PasswordResetToken.used_at.is_(None),
+            )
+        )
+        if token_row is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired reset link",
+            )
+        now = datetime.now(timezone.utc)
+        expires = token_row.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires <= now:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired reset link",
+            )
+
+        user = session.get(User, token_row.user_id)
+        tenant = session.get(Tenant, token_row.tenant_id)
+        if user is None or tenant is None or tenant.status != "active":
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired reset link",
+            )
+
+        _set_password(session, user, body.new_password)
+        token_row.used_at = now
+        session.commit()
+
+    return sanitize_output_payload(
+        {
+            "message": "Password updated. You can sign in with your new password.",
+        }
+    )
 
 
 @router.post("/join")

@@ -5,6 +5,8 @@ export const routes = {
   login: "/login",
   signup: "/signup",
   join: "/join",
+  forgotPassword: "/forgot-password",
+  resetPassword: "/reset-password",
   settings: "/settings",
   console: "/console",
   consoleInvestigation: (id: string, view?: Exclude<ConsoleSubView, "report">) =>

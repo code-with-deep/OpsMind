@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     auth_invite_default_ttl_days: int = 14
     auth_max_active_invites: int = 25
 
+    # Password reset / change (email link + Settings)
+    auth_password_reset_ttl_minutes: int = 60
+    auth_password_reset_max_per_hour: int = 5
+    app_public_url: str = "http://localhost:3000"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    email_from: str = "OpsMind <noreply@opsmind.local>"
+
     # MT3 — playbooks / embeddings
     opsmind_embedding_provider: str = "local"
     openai_api_key: str = ""

@@ -45,6 +45,10 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [savingCompany, setSavingCompany] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [csvUploading, setCsvUploading] = useState(false);
   // per-row delete tracking — stores the id being deleted so only that row shows spinner
@@ -221,6 +225,34 @@ export function SettingsPage() {
       );
     } finally {
       setSavingCompany(false);
+    }
+  };
+
+  const savePassword = async () => {
+    if (!currentPassword || !newPassword) return;
+    if (newPassword !== confirmPassword) {
+      toast("New passwords do not match.", "error");
+      return;
+    }
+    setSavingPassword(true);
+    try {
+      const res = await api.changePassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setUser(res.user);
+      setStoredUser(res.user);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      toast("Password updated. Other sessions will need to sign in again.", "success");
+    } catch (err: unknown) {
+      toast(
+        err instanceof Error ? err.message : "Failed to change password",
+        "error"
+      );
+    } finally {
+      setSavingPassword(false);
     }
   };
 
@@ -426,6 +458,63 @@ export function SettingsPage() {
           )}
         </div>
       </section>
+
+      {user ? (
+        <section className="app-section">
+          <div className="app-section-header">
+            <h3 className="font-app-heading text-base text-white">Change password</h3>
+            <p className="text-xs text-surface-400 mt-1">
+              Update the password for {user.email}
+            </p>
+          </div>
+          <div className="app-section-body space-y-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block space-y-1">
+                <span className="text-xs text-surface-400">Current password</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  minLength={8}
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-surface-400">New password</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-surface-400">Confirm new password</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
+                />
+              </label>
+            </div>
+            <Button
+              variant="accent"
+              size="sm"
+              loading={savingPassword}
+              disabled={!currentPassword || !newPassword || !confirmPassword}
+              onClick={() => void savePassword()}
+            >
+              Update password
+            </Button>
+          </div>
+        </section>
+      ) : null}
 
       {user ? (
         <section className="app-section">

@@ -105,6 +105,14 @@ export function LoginPage() {
             className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
           />
         </label>
+        <div className="flex justify-end -mt-1">
+          <Link
+            to={routes.forgotPassword}
+            className="text-xs text-accent-400 hover:text-accent-300"
+          >
+            Forgot password?
+          </Link>
+        </div>
         {error ? (
           <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2.5">
             <span className="shrink-0 mt-0.5">⚠</span>

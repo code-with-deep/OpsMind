@@ -30,6 +30,9 @@ class Tenant(Base):
     users: Mapped[list[User]] = relationship(back_populates="tenant")
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="tenant")
     invite_codes: Mapped[list[InviteCode]] = relationship(back_populates="tenant")
+    password_reset_tokens: Mapped[list[PasswordResetToken]] = relationship(
+        back_populates="tenant"
+    )
     ingest_jobs: Mapped[list[IngestJob]] = relationship(back_populates="tenant")
     access_requests: Mapped[list[AccessRequest]] = relationship(back_populates="tenant")
     settings: Mapped[Optional[TenantSettings]] = relationship(
@@ -57,11 +60,18 @@ class User(Base):
     revoked_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="users")
+    password_reset_tokens: Mapped[list[PasswordResetToken]] = relationship(
+        back_populates="user"
+    )
 
 
 class ApiKey(Base):
@@ -111,6 +121,36 @@ class TenantSettings(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="settings")
+
+
+class PasswordResetToken(Base):
+    """Single-use email password-reset tokens (hash at rest)."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    token_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="password_reset_tokens")
+    user: Mapped[User] = relationship(back_populates="password_reset_tokens")
 
 
 class InviteCode(Base):

@@ -11,9 +11,10 @@ company's workspace, so they're private to you. Download both from
   Regenerate: `python -m scripts.generate_sample_csv_bundle` (deterministic,
   fixed seed — same output every run).
 - `opsmind_sample_playbooks.zip` — 5 SOP Markdown files (`playbooks/*.md`),
-  tuned to reference the exact SKUs/carriers in the CSV bundle above. Extract
-  it and upload each `.md` individually via **Settings → Playbooks → Upload
-  SOP** (playbook uploads are one file at a time).
+  tuned to reference the exact SKUs/carriers in the CSV bundle above. Upload
+  the ZIP as-is via **Settings → Playbooks → Upload SOP(s)** — ZIP uploads
+  are extracted server-side and every `.md`/`.markdown`/`.txt` file inside is
+  ingested individually.
   Regenerate: `python -m scripts.generate_sample_playbooks_bundle`.
 
 Upload the CSV bundle first, then the playbooks, so investigations can cite

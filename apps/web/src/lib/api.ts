@@ -503,10 +503,18 @@ export const api = {
     return request("/playbooks");
   },
 
+  /** Upload one .md/.markdown/.txt playbook, or a .zip of several — the ZIP
+   * is extracted server-side and every playbook inside is ingested. */
   async uploadPlaybook(
     file: File,
     title?: string
-  ): Promise<{ playbook: PlaybookItem; message: string }> {
+  ): Promise<{
+    playbook?: PlaybookItem;
+    playbooks: PlaybookItem[];
+    errors?: { filename: string; error: string }[];
+    count: number;
+    message: string;
+  }> {
     const base = getApiBaseUrl();
     const form = new FormData();
     form.append("file", file);

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+import zipfile
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,10 @@ from opsmind.guardrails.output import sanitize_output_payload
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
 
 _ALLOWED_SUFFIXES = {".md", ".markdown", ".txt"}
+_ZIP_SUFFIXES = {".zip"}
+# Zip-bomb guard: cap total decompressed content, independent of the raw ZIP
+# size check below. Plain-text SOPs don't realistically compress beyond ~20x.
+_ZIP_DECOMPRESSED_RATIO_CAP = 20
 
 SAMPLE_PLAYBOOKS_ZIP = (
     Path(__file__).resolve().parents[4]
@@ -90,7 +96,8 @@ def download_sample_playbooks(
     """Download the sample SOP playbooks (5 .md files, zipped) tuned to the
     planted scenario in the sample CSV bundle (GET /data/sample-template) —
     upload the CSV data first, then these, for grounded playbook citations.
-    Extract the ZIP and upload each .md individually via "Upload SOP".
+    Upload the ZIP as-is via "Upload SOP(s)" — POST /playbooks extracts and
+    ingests every .md/.markdown/.txt file inside a ZIP automatically.
     """
     if not SAMPLE_PLAYBOOKS_ZIP.is_file():
         raise HTTPException(
@@ -104,6 +111,71 @@ def download_sample_playbooks(
     )
 
 
+def _current_playbook_count(session: Session, tenant_id: uuid.UUID) -> int:
+    return int(
+        session.scalar(
+            select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)
+        )
+        or 0
+    )
+
+
+def _ingest_one_playbook(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    filename: str,
+    raw: bytes,
+    title: str | None,
+    max_bytes: int,
+    max_count: int,
+    doc_count: list[int],
+) -> dict[str, Any]:
+    """Ingest one playbook file's bytes. Returns a per-file result dict —
+    never raises, so one bad file in a ZIP batch doesn't abort the rest.
+    `doc_count` is a 1-item mutable list used as an in-out counter across
+    calls in the same batch (avoids an extra COUNT query per file).
+    """
+    if len(raw) > max_bytes:
+        return {"filename": filename, "ok": False, "error": f"exceeds soft limit of {max_bytes} bytes"}
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"filename": filename, "ok": False, "error": "must be UTF-8 text"}
+    if not content.strip():
+        return {"filename": filename, "ok": False, "error": "content is empty"}
+
+    doc_key = safe_doc_key(filename)
+    existing = session.scalar(
+        select(Document).where(Document.tenant_id == tenant_id, Document.doc_key == doc_key)
+    )
+    if existing is None and doc_count[0] >= max_count:
+        return {"filename": filename, "ok": False, "error": f"playbook soft limit reached ({max_count})"}
+
+    dest = tenant_playbook_path(tenant_id, doc_key)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content, encoding="utf-8")
+
+    try:
+        document, chunk_count = ingest_playbook_markdown(
+            session,
+            tenant_id=tenant_id,
+            content=content,
+            doc_key=doc_key,
+            path=str(dest),
+            title=(title.strip() if title else None),
+            commit=True,
+        )
+    except ValueError as exc:
+        return {"filename": filename, "ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"filename": filename, "ok": False, "error": f"embedding/ingest failed: {exc}"}
+
+    if existing is None:
+        doc_count[0] += 1
+    return {"filename": filename, "ok": True, "playbook": _document_payload(document, chunk_count)}
+
+
 @router.post("")
 async def upload_playbook(
     file: UploadFile = File(...),
@@ -113,10 +185,10 @@ async def upload_playbook(
 ) -> dict[str, Any]:
     filename = file.filename or "playbook.md"
     suffix = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
-    if suffix not in _ALLOWED_SUFFIXES:
+    if suffix not in _ALLOWED_SUFFIXES and suffix not in _ZIP_SUFFIXES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only Markdown (.md) or plain text (.txt) playbooks are supported",
+            detail="Only Markdown (.md), plain text (.txt), or a .zip of those files is supported",
         )
 
     limits = _soft_limits(session, tenant.tenant_id)
@@ -131,7 +203,7 @@ async def upload_playbook(
             if content_length_int > max_bytes:
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"Playbook exceeds soft limit of {max_bytes} bytes",
+                    detail=f"Upload exceeds soft limit of {max_bytes} bytes",
                 )
         except ValueError:
             pass  # Invalid header, continue with byte-checking below
@@ -140,69 +212,94 @@ async def upload_playbook(
     if len(raw) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Playbook exceeds soft limit of {max_bytes} bytes",
-        )
-    try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Playbook must be UTF-8 text",
-        ) from exc
-
-    if not content.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Playbook content is empty",
+            detail=f"Upload exceeds soft limit of {max_bytes} bytes",
         )
 
-    doc_key = safe_doc_key(filename)
-    existing = session.scalar(
-        select(Document).where(
-            Document.tenant_id == tenant.tenant_id,
-            Document.doc_key == doc_key,
-        )
-    )
-    if existing is None:
-        current_count = session.scalar(
-            select(func.count()).select_from(Document).where(
-                Document.tenant_id == tenant.tenant_id
-            )
-        ) or 0
-        if int(current_count) >= max_count:
+    doc_count = [_current_playbook_count(session, tenant.tenant_id)]
+
+    if suffix in _ZIP_SUFFIXES:
+        try:
+            zf = zipfile.ZipFile(BytesIO(raw))
+        except zipfile.BadZipFile as exc:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Playbook soft limit reached ({max_count})",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid ZIP archive",
+            ) from exc
+
+        entries = [
+            info
+            for info in zf.infolist()
+            if not info.is_dir()
+            and Path(info.filename).suffix.lower() in _ALLOWED_SUFFIXES
+            and not Path(info.filename).name.startswith(".")
+        ]
+        if not entries:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ZIP contains no .md/.markdown/.txt files",
             )
 
-    dest = tenant_playbook_path(tenant.tenant_id, doc_key)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content, encoding="utf-8")
+        # Zip-bomb guard: bound total decompressed size independent of the
+        # already-checked compressed size (P0-7 spirit — never trust the
+        # archive's own size metadata blindly, but info.file_size here is
+        # cheap to sum before any decompression happens).
+        total_decompressed = sum(info.file_size for info in entries)
+        if total_decompressed > max_bytes * _ZIP_DECOMPRESSED_RATIO_CAP:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="ZIP decompresses far beyond the playbook size limit — rejected.",
+            )
 
-    try:
-        document, chunk_count = ingest_playbook_markdown(
-            session,
-            tenant_id=tenant.tenant_id,
-            content=content,
-            doc_key=doc_key,
-            path=str(dest),
-            title=(title.strip() if title else None),
-            commit=True,
+        results = [
+            _ingest_one_playbook(
+                session,
+                tenant_id=tenant.tenant_id,
+                filename=Path(info.filename).name,
+                raw=zf.read(info),
+                title=None,  # per-file titles come from each file's own heading
+                max_bytes=max_bytes,
+                max_count=max_count,
+                doc_count=doc_count,
+            )
+            for info in entries
+        ]
+        ok_count = sum(1 for r in results if r["ok"])
+        return sanitize_output_payload(
+            {
+                "playbooks": [r["playbook"] for r in results if r["ok"]],
+                "errors": [
+                    {"filename": r["filename"], "error": r["error"]} for r in results if not r["ok"]
+                ],
+                "count": ok_count,
+                "message": f"{ok_count}/{len(results)} playbooks uploaded and indexed for this tenant only.",
+            }
         )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Embedding/ingest failed: {exc}",
-        ) from exc
+
+    result = _ingest_one_playbook(
+        session,
+        tenant_id=tenant.tenant_id,
+        filename=filename,
+        raw=raw,
+        title=title,
+        max_bytes=max_bytes,
+        max_count=max_count,
+        doc_count=doc_count,
+    )
+    if not result["ok"]:
+        status_code = (
+            status.HTTP_403_FORBIDDEN
+            if "soft limit" in result["error"]
+            else status.HTTP_502_BAD_GATEWAY
+            if "embedding" in result["error"]
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=result["error"])
 
     return sanitize_output_payload(
         {
-            "playbook": _document_payload(document, chunk_count),
+            "playbook": result["playbook"],
+            "playbooks": [result["playbook"]],
+            "count": 1,
             "message": "Playbook uploaded and indexed for this tenant only.",
         }
     )

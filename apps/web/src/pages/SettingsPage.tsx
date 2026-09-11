@@ -263,17 +263,28 @@ export function SettingsPage() {
     if (!file) return;
     setUploading(true);
     try {
-      await api.uploadPlaybook(file);
+      const res = await api.uploadPlaybook(file);
       await load();
-      toast(`"${file.name}" uploaded and indexed for investigations.`, "success");
+      const isZip = file.name.toLowerCase().endsWith(".zip");
+      if (isZip) {
+        const failed = res.errors?.length ?? 0;
+        toast(
+          failed > 0
+            ? `${res.count} of ${res.count + failed} playbooks uploaded from "${file.name}" — ${failed} failed (${res.errors!.map((e) => e.filename).join(", ")}).`
+            : `${res.count} playbooks uploaded from "${file.name}" and indexed for investigations.`,
+          failed > 0 && res.count === 0 ? "error" : "success"
+        );
+      } else {
+        toast(`"${file.name}" uploaded and indexed for investigations.`, "success");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
       toast(
         msg.includes("limit") || msg.includes("size")
           ? "File is too large. Maximum upload size exceeded."
           : msg.includes("format") || msg.includes("type")
-          ? "Unsupported file type. Please upload a Markdown (.md) or plain text file."
-          : `Failed to upload playbook: ${msg || "please try again."}`,
+          ? "Unsupported file type. Please upload a Markdown (.md), plain text, or .zip file."
+          : `Failed to upload playbook(s): ${msg || "please try again."}`,
         "error"
       );
     } finally {
@@ -668,7 +679,8 @@ export function SettingsPage() {
               <h3 className="font-app-heading text-base text-white">Playbooks</h3>
               <p className="text-xs text-surface-400 mt-1">
                 Company SOPs are chunked and embedded for RAG — never shared with other tenants.
-                Sample playbooks pair with the sample CSV bundle above (same SKUs/carriers).
+                Upload one .md/.txt file, or a .zip of several at once. Sample playbooks pair
+                with the sample CSV bundle above (same SKUs/carriers).
               </p>
             </div>
             {isAdmin ? (
@@ -685,7 +697,7 @@ export function SettingsPage() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".md,.markdown,.txt,text/markdown,text/plain"
+                  accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip"
                   className="hidden"
                   onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
                 />
@@ -696,7 +708,7 @@ export function SettingsPage() {
                   loading={uploading}
                   onClick={() => fileRef.current?.click()}
                 >
-                  Upload SOP
+                  Upload SOP(s)
                 </Button>
               </div>
             ) : null}

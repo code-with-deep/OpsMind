@@ -70,7 +70,20 @@ def _is_problem_week(d: date) -> bool:
 
 
 def ensure_readonly_role(engine: Engine) -> None:
-    """Create/update read-only login used by investigation tools (P2+)."""
+    """Create/update read-only login used by investigation tools (P2+).
+
+    P0-3 fix (caught by an actual end-to-end run): this used to GRANT SELECT
+    ON ALL TABLES IN SCHEMA public plus an ALTER DEFAULT PRIVILEGES blanket
+    grant — meaning every time this function ran (every seed / playbook
+    ingest), it silently re-opened the readonly SQL tool's access to
+    control-plane tables (users, api_keys, password_reset_tokens, ...) that
+    migration 0014 explicitly revokes. Grants are now scoped to only the
+    allowlisted business tables the SQL tool is actually meant to query, and
+    the blanket default-privileges grant is gone — new tables are NOT
+    auto-granted to this role going forward.
+    """
+    from opsmind.tools.sql_templates import ALLOWLISTED_TABLES
+
     user = os.getenv("DB_READONLY_USER")
     password = os.getenv("DB_READONLY_PASSWORD")
     if not user or password is None:
@@ -98,13 +111,8 @@ def ensure_readonly_role(engine: Engine) -> None:
             if db_name:
                 conn.execute(text(f'GRANT CONNECT ON DATABASE "{db_name}" TO "{user}"'))
             conn.execute(text(f'GRANT USAGE ON SCHEMA public TO "{user}"'))
-            conn.execute(text(f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{user}"'))
-            conn.execute(
-                text(
-                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-                    f'GRANT SELECT ON TABLES TO "{user}"'
-                )
-            )
+            for table in sorted(ALLOWLISTED_TABLES):
+                conn.execute(text(f'GRANT SELECT ON {table} TO "{user}"'))
     except Exception as exc:
         # On managed cloud databases (Neon, AWS RDS, Supabase), role DDL is restricted.
         # Allow seeding and ingestion to proceed gracefully.

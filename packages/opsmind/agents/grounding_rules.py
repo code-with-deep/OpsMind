@@ -62,6 +62,41 @@ def sql_revenue_values(findings: list[dict[str, Any]]) -> list[float]:
     return values
 
 
+def _all_sql_numeric_values(findings: list[dict[str, Any]]) -> set[float]:
+    """All numeric values present anywhere in any SQL finding's rows.
+
+    Bug found via an actual end-to-end run: numeric_mismatch_gaps() below used
+    to compare stated numbers ONLY against sql_revenue_values() (week-total
+    aggregates). But the heuristic synthesizer always cites a per-SKU revenue
+    figure too (e.g. "Top problem-week SKU by revenue: ... revenue=2319.42"),
+    pulled straight from a real sku_revenue_mix row — that number was never in
+    the narrow week-totals set, so every heuristic-mode investigation with SKU
+    mix data got a false-positive "invented number" flag and was rejected into
+    insufficient_evidence after burning all retries. This broader set answers
+    "was this number observed anywhere in real SQL evidence" — the actual
+    question the check is supposed to ask — while sql_revenue_values() stays
+    narrow for the separate missing_revenue_sql_totals check below.
+    """
+    values: set[float] = set()
+    for finding in findings:
+        if finding.get("kind") != "sql":
+            continue
+        for row in finding.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            for v in row.values():
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, (int, float)):
+                    values.add(round(float(v), 2))
+                elif isinstance(v, str):
+                    try:
+                        values.add(round(float(v.replace(",", "")), 2))
+                    except ValueError:
+                        continue
+    return values
+
+
 def money_mentions(text: str) -> list[float]:
     """Extract dollar-like amounts ($…, 1,350, or n.nn) — not bare years/counts."""
     values: list[float] = []
@@ -104,7 +139,12 @@ def numeric_mismatch_gaps(
         tol = max(1.0, abs(b) * 0.02)
         return abs(a - b) <= tol
 
-    unmatched = [m for m in mentioned if not any(_close(m, s) for s in sql_values)]
+    # Compare against ALL numbers actually present in SQL evidence (SKU mix,
+    # refunds, etc.) — not just the narrow week-totals set, which produced
+    # false positives on legitimate per-SKU/returns/carrier figures (see
+    # _all_sql_numeric_values docstring).
+    grounded_values = _all_sql_numeric_values(findings)
+    unmatched = [m for m in mentioned if not any(_close(m, s) for s in grounded_values)]
     # Ignore tiny incidental numbers (percents often parsed without $ — filter large $ claims)
     unmatched_money = [m for m in unmatched if m >= 50]
     if unmatched_money:

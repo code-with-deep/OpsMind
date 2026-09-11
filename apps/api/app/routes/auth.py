@@ -163,9 +163,14 @@ class CreateInviteBody(BaseModel):
 @router.post("/signup")
 def signup(body: SignupBody, request: Request) -> dict[str, Any]:
     """Self-serve signup: create tenant + admin user, return JWT."""
-    # P1-12: throttle tenant creation per IP.
-    rate_limit_by_ip(request, bucket="signup", max_hits=5, window_seconds=3600)
     settings = get_settings()
+    # P1-12: throttle tenant creation per IP (configurable — see Settings docstring).
+    rate_limit_by_ip(
+        request,
+        bucket="signup",
+        max_hits=settings.rate_limit_signup_per_hour,
+        window_seconds=3600,
+    )
     email = str(body.email).strip().lower()
     factory = get_owner_session_factory(settings.database_url_sync)
 

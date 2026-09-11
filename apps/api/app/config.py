@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     csv_max_upload_mb: int = 10
     csv_max_rows: int = 50000
 
+    # P1-12 rate limits — configurable so a busy shared-IP office (or a test
+    # suite exercising signup repeatedly) doesn't get needlessly locked out at
+    # the default. Bug found by an actual full end-to-end test run: the
+    # original hardcoded 5/hour signup limit broke 4 legitimate tests in a
+    # single normal suite run — that's the same failure mode a real shared-NAT
+    # office would hit under ordinary use, not just abuse.
+    rate_limit_signup_per_hour: int = 20
+
 
 @lru_cache
 def get_settings() -> Settings:

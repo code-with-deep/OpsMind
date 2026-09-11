@@ -604,7 +604,7 @@ export function SettingsPage() {
               <Database className="w-4 h-4 text-accent-400" />
               {ready?.ready ? (
                 <Badge variant="success" size="xs">
-                  ready to investigate
+                  business data loaded
                 </Badge>
               ) : (
                 <Badge variant="error" size="xs">
@@ -616,6 +616,9 @@ export function SettingsPage() {
                 {ready?.daily_metrics ?? 0}
               </span>
             </div>
+            <p className="text-xs text-surface-500">
+              Investigations also require at least one playbook — see the Playbooks section below.
+            </p>
 
             {jobs.length === 0 ? (
               <p className="app-empty text-sm">
@@ -714,10 +717,23 @@ export function SettingsPage() {
             ) : null}
           </div>
           <div className="app-section-body space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <BookOpen className="w-4 h-4 text-accent-400" />
+              {playbooks.length > 0 ? (
+                <Badge variant="success" size="xs">
+                  playbooks loaded
+                </Badge>
+              ) : (
+                <Badge variant="error" size="xs">
+                  upload required
+                </Badge>
+              )}
+              <span className="text-xs text-surface-400">{playbooks.length} indexed</span>
+            </div>
             {playbooks.length === 0 ? (
               <p className="app-empty text-sm">
                 {isAdmin
-                  ? "No playbooks yet. Upload a Markdown SOP to ground investigations."
+                  ? "No playbooks yet. Upload a Markdown SOP (or a .zip of several) to ground investigations."
                   : "No playbooks uploaded for this company yet."}
               </p>
             ) : (

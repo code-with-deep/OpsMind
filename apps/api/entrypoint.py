@@ -42,7 +42,25 @@ def _run_migrations() -> None:
         with engine.connect() as conn:
             conn.execute(sqlalchemy.text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
             try:
-                # Widen version_num column if the DB is already initialised but narrow.
+                # Bug found by an actual fresh-DB end-to-end run: on a brand-new
+                # database `alembic_version` doesn't exist yet, so the ALTER
+                # below (which only handles an *existing* narrow column) is a
+                # silent no-op — then Alembic creates the table itself with its
+                # own default VARCHAR(32), and the run fails partway through the
+                # very first upgrade once a revision id longer than 32 chars
+                # shows up (0011_remove_warehouse_connections is 34 chars).
+                # Pre-create the table at the right width so Alembic finds it
+                # already there and never applies its narrow default.
+                conn.execute(
+                    sqlalchemy.text(
+                        "CREATE TABLE IF NOT EXISTS alembic_version "
+                        "(version_num VARCHAR(128) NOT NULL PRIMARY KEY)"
+                    )
+                )
+                conn.commit()
+
+                # Also widen in place for a database that already has the table
+                # at the old narrow width from a prior deployment.
                 try:
                     conn.execute(
                         sqlalchemy.text(
@@ -52,7 +70,7 @@ def _run_migrations() -> None:
                     )
                     conn.commit()
                 except Exception:
-                    conn.rollback()  # table doesn't exist yet, or already wide enough — fine
+                    conn.rollback()  # already wide enough — fine
 
                 command.upgrade(alembic_cfg, "head")
                 print("[entrypoint] Alembic migrations applied.", flush=True)

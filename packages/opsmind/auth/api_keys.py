@@ -20,10 +20,16 @@ def verify_api_key(raw_key: str, stored_hash: str) -> bool:
 
 
 def key_prefix(raw_key: str) -> str:
-    """Return a display prefix for an API key (P1-1 fix for test suite)."""
+    """Return a display prefix for an API key (P1-1 fix for test suite).
+
+    Bug found by an actual end-to-end run: the api_keys.key_prefix column is
+    VARCHAR(16) — the previous version here returned up to 17 characters
+    (16 + the ellipsis), overflowing the column and raising
+    StringDataRightTruncation on insert. Cap at exactly 16 total.
+    """
     normalized = (raw_key or "").strip()
     if len(normalized) <= 16:
         return normalized
-    return f"{normalized[:16]}…"
+    return f"{normalized[:15]}…"
 
 

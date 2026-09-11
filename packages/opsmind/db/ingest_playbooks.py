@@ -8,7 +8,9 @@ import re
 import uuid
 from pathlib import Path
 
-from sqlalchemy import create_engine, delete, select, text
+from typing import Any
+
+from sqlalchemy import create_engine, delete, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from opsmind.db.memory_models import Document, DocumentChunk
@@ -164,6 +166,15 @@ def safe_doc_key(raw: str) -> str:
 def tenant_playbook_path(tenant_id: uuid.UUID, doc_key: str) -> Path:
     root = Path(os.getenv("UPLOADS_DIR", str(DEFAULT_UPLOADS_DIR)))
     return root / str(tenant_id) / "playbooks" / f"{doc_key}.md"
+
+
+def tenant_playbooks_ready(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
+    """Ready-gate: at least one indexed SOP playbook for this tenant (mirrors
+    tenant_data_ready() in ingest_csv.py for the CSV business-data plane)."""
+    count = session.scalar(
+        select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)
+    ) or 0
+    return {"ready": int(count) > 0, "playbooks": int(count)}
 
 
 def ingest_playbook_markdown(

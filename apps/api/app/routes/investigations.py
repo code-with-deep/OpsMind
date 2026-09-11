@@ -16,6 +16,7 @@ from api.app.config import get_settings
 from api.app.deps import get_tenant_session
 from api.app.errors import safe_internal_error
 from opsmind.db.ingest_csv import tenant_data_ready
+from opsmind.db.ingest_playbooks import tenant_playbooks_ready
 from opsmind.db.memory_models import Investigation
 from opsmind.db.session import dispose_owner_engine, get_owner_session_factory
 from opsmind.db.tenant_models import TenantSettings
@@ -109,17 +110,40 @@ def create_and_run_investigation(
             detail="Async enqueue is not enabled; set wait=true.",
         )
 
+    # Require BOTH business data (CSV) and at least one SOP playbook before
+    # running an investigation — a report grounded only in SQL with no
+    # playbook guidance (or vice versa) isn't the product's actual guarantee
+    # ("cite-or-abstain" against SQL *and* SOP evidence), so don't even start.
     ready = tenant_data_ready(session, tenant.tenant_id)
+    playbooks_ready = tenant_playbooks_ready(session, tenant.tenant_id)
+    missing: list[str] = []
     if not ready["ready"]:
+        missing.append("business_data")
+    if not playbooks_ready["ready"]:
+        missing.append("playbooks")
+    if missing:
+        if missing == ["business_data"]:
+            reason = (
+                "Upload company CSV data in Settings before running investigations. "
+                "Required: products.csv, orders.csv, order_items.csv (ZIP)."
+            )
+        elif missing == ["playbooks"]:
+            reason = (
+                "Upload at least one SOP playbook in Settings before running investigations."
+            )
+        else:
+            reason = (
+                "Upload BOTH company CSV data and at least one SOP playbook in Settings "
+                "before running investigations."
+            )
         raise HTTPException(
             status_code=409,
             detail={
                 "error": "tenant_data_not_ready",
-                "reason": (
-                    "Upload company CSV data in Settings before running investigations. "
-                    "Required: products.csv, orders.csv, order_items.csv (ZIP)."
-                ),
+                "reason": reason,
+                "missing": missing,
                 "ready": ready,
+                "playbooks_ready": playbooks_ready,
             },
         )
 

@@ -91,6 +91,8 @@ def test_signup_login_invite_isolation() -> None:
     invite_code = invite_resp.json()["invite"]["code"]
     assert invite_code.startswith("OM-")
 
+    # /auth/join no longer returns a JWT directly — it creates a pending
+    # AccessRequest that an admin must approve (MT access-request workflow).
     join = client.post(
         "/auth/join",
         json={
@@ -100,9 +102,23 @@ def test_signup_login_invite_isolation() -> None:
         },
     )
     assert join.status_code == 200, join.text
-    inv_token = join.json()["access_token"]
-    assert join.json()["user"]["role"] == "investigator"
-    assert join.json()["user"]["tenant"]["id"] == admin_tenant
+    assert join.json()["status"] == "pending"
+    request_id = join.json()["request_id"]
+
+    approve = client.post(
+        f"/access/requests/{request_id}/approve",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert approve.status_code == 200, approve.text
+
+    inv_login = client.post(
+        "/auth/login",
+        json={"email": f"inv-{suffix}@example.com", "password": "password123"},
+    )
+    assert inv_login.status_code == 200, inv_login.text
+    inv_token = inv_login.json()["access_token"]
+    assert inv_login.json()["user"]["role"] == "investigator"
+    assert inv_login.json()["user"]["tenant"]["id"] == admin_tenant
 
     # Second company cannot see first company's investigations via JWT
     other = client.post(

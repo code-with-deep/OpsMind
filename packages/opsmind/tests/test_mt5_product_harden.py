@@ -97,6 +97,8 @@ def test_mt5_full_path_two_tenants() -> None:
     assert invite.status_code == 200, invite.text
     code = invite.json()["invite"]["code"]
 
+    # /auth/join no longer returns a JWT directly — it creates a pending
+    # AccessRequest that an admin must approve (MT access-request workflow).
     join = client.post(
         "/auth/join",
         json={
@@ -106,8 +108,13 @@ def test_mt5_full_path_two_tenants() -> None:
         },
     )
     assert join.status_code == 200, join.text
-    assert join.json()["user"]["tenant"]["id"] == acme_tenant
-    assert join.json()["user"]["role"] == "investigator"
+    assert join.json()["status"] == "pending"
+
+    approve = client.post(
+        f"/access/requests/{join.json()['request_id']}/approve",
+        headers=headers,
+    )
+    assert approve.status_code == 200, approve.text
 
     # --- CSV + playbook ---
     up = client.post(

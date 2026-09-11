@@ -28,7 +28,6 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
 
   useEffect(() => {
     if (!getAccessToken()) return;
@@ -62,19 +61,6 @@ export function LoginPage() {
       );
     } finally {
       setLoading(false);
-    }
-  };
-
-  const onTryDemo = async () => {
-    setDemoLoading(true);
-    setError(null);
-    try {
-      await api.demoLogin();
-      navigate(routes.console, { replace: true, state: { openNewModal: true } });
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not start the demo. Please try again.");
-    } finally {
-      setDemoLoading(false);
     }
   };
 
@@ -146,18 +132,6 @@ export function LoginPage() {
           Sign in
         </Button>
       </form>
-      <div className="relative py-1 text-center">
-        <span className="text-[11px] uppercase tracking-wider text-surface-600">or</span>
-      </div>
-      <Button
-        type="button"
-        variant="secondary"
-        className="w-full"
-        loading={demoLoading}
-        onClick={() => void onTryDemo()}
-      >
-        Try Live Demo — no signup
-      </Button>
     </AuthLayout>
   );
 }

@@ -73,12 +73,6 @@ class Settings(BaseSettings):
     csv_max_upload_mb: int = 10
     csv_max_rows: int = 50000
 
-    # Public "Try Live Demo" login — issues a short-lived, restricted-role
-    # (investigator, never admin) session against the seeded demo tenant so
-    # visitors can try the product with real data without signing up.
-    enable_demo_login: bool = True
-    demo_login_jwt_expire_hours: int = 2
-
 
 @lru_cache
 def get_settings() -> Settings:

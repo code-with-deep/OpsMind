@@ -25,10 +25,6 @@ interface LandingPageProps {
   onLaunchConsole: () => void;
   onExploreHistory: () => void;
   onExploreCases: () => void;
-  /** One-click login into the seeded public demo tenant. */
-  onTryDemo: () => void;
-  demoLoading?: boolean;
-  demoError?: string | null;
   investigationCount?: number;
   approvedCount?: number;
   /** When true, primary CTAs open the app instead of auth screens. */
@@ -126,9 +122,6 @@ export function LandingPage({
   onLaunchConsole,
   onExploreHistory,
   onExploreCases,
-  onTryDemo,
-  demoLoading = false,
-  demoError = null,
   investigationCount = 0,
   approvedCount = 0,
   isAuthenticated = false,
@@ -157,16 +150,6 @@ export function LandingPage({
               <a href="#features" className="hover:text-surface-100 transition-colors">
                 Features
               </a>
-              {!isAuthenticated ? (
-                <button
-                  type="button"
-                  onClick={onTryDemo}
-                  disabled={demoLoading}
-                  className="hover:text-accent-300 text-accent-400 transition-colors disabled:opacity-60"
-                >
-                  {demoLoading ? "Loading…" : "Try Live Demo"}
-                </button>
-              ) : null}
               <button
                 type="button"
                 onClick={onSecondaryCta}
@@ -218,29 +201,16 @@ export function LandingPage({
                 {secondaryCtaLabel}
               </button>
               {!isAuthenticated ? (
-                <>
-                  <button
-                    type="button"
-                    disabled={demoLoading}
-                    onClick={() => {
-                      setIsMobileMenuOpen(false);
-                      onTryDemo();
-                    }}
-                    className="block w-full text-left px-3 py-2.5 rounded-lg text-sm text-accent-400 hover:bg-surface-900 disabled:opacity-60"
-                  >
-                    {demoLoading ? "Loading…" : "Try Live Demo"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMobileMenuOpen(false);
-                      onGetStarted();
-                    }}
-                    className="block w-full text-left px-3 py-2.5 rounded-lg text-sm text-accent-300 hover:bg-surface-900"
-                  >
-                    Create workspace
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    onGetStarted();
+                  }}
+                  className="block w-full text-left px-3 py-2.5 rounded-lg text-sm text-accent-300 hover:bg-surface-900"
+                >
+                  Create workspace
+                </button>
               ) : (
                 <button
                   type="button"
@@ -319,35 +289,15 @@ export function LandingPage({
               {primaryCtaLabel}
             </button>
             {!isAuthenticated ? (
-              <>
-                <button
-                  type="button"
-                  onClick={onTryDemo}
-                  disabled={demoLoading}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full landing-glass border border-accent-600/50 text-accent-200 font-medium text-sm hover:border-accent-500/70 hover:bg-surface-900/80 transition-all disabled:opacity-60"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  {demoLoading ? "Loading demo…" : "Try Live Demo"}
-                </button>
-                <button
-                  type="button"
-                  onClick={onSignIn}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full landing-glass border border-surface-600/80 text-surface-100 font-medium text-sm hover:border-accent-500/40 hover:bg-surface-900/80 transition-all"
-                >
-                  Sign in
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full landing-glass border border-surface-600/80 text-surface-100 font-medium text-sm hover:border-accent-500/40 hover:bg-surface-900/80 transition-all"
+              >
+                Sign in
+              </button>
             ) : null}
           </div>
-          {!isAuthenticated ? (
-            <p className="text-xs text-surface-500 animate-fade-in-up" style={{ animationDelay: "0.4s" }}>
-              No signup — Try Live Demo drops you into a real console with seeded
-              ecommerce data and planted incidents to investigate.
-            </p>
-          ) : null}
-          {demoError ? (
-            <p className="text-xs text-rose-400 animate-fade-in-up">{demoError}</p>
-          ) : null}
         </div>
       </section>
 
@@ -549,15 +499,6 @@ export function LandingPage({
                     className="w-full sm:w-auto px-7 py-3 rounded-full bg-gradient-to-b from-accent-400 to-accent-600 text-surface-950 font-semibold text-sm shadow-glow-accent hover:scale-[1.02] transition-transform"
                   >
                     Create workspace
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onTryDemo}
-                    disabled={demoLoading}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 rounded-full border border-accent-700/50 text-accent-200 font-medium text-sm hover:border-accent-500/60 transition-colors disabled:opacity-60"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    {demoLoading ? "Loading…" : "Try Live Demo"}
                   </button>
                   <button
                     type="button"

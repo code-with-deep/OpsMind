@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,12 @@ from opsmind.guardrails.output import sanitize_output_payload
 router = APIRouter(prefix="/data", tags=["data"])
 
 DEFAULT_UPLOADS = Path(__file__).resolve().parents[4] / "data" / "uploads"
+SAMPLE_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "data"
+    / "sample_templates"
+    / "opsmind_sample_data.zip"
+)
 
 
 def _soft_limits(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
@@ -70,6 +77,26 @@ def data_ready(
 ) -> dict[str, Any]:
     status_payload = tenant_data_ready(session, tenant.tenant_id)
     return sanitize_output_payload(status_payload)
+
+
+@router.get("/sample-template")
+def download_sample_template(
+    tenant: TenantContext = Depends(require_tenant_context),
+) -> FileResponse:
+    """Download a ready-made sample CSV ZIP (own, standalone dataset — not the
+    shared demo tenant's data) so a new company can try investigations without
+    writing CSVs by hand first. See data/sample_templates/README.md.
+    """
+    if not SAMPLE_TEMPLATE_PATH.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sample template is not available on this deployment.",
+        )
+    return FileResponse(
+        SAMPLE_TEMPLATE_PATH,
+        media_type="application/zip",
+        filename="opsmind_sample_data.zip",
+    )
 
 
 @router.get("/ingest-jobs")

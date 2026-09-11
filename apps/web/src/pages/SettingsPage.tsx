@@ -4,6 +4,7 @@ import {
   Check,
   Copy,
   Database,
+  Download,
   Settings2,
   Ticket,
   Trash2,
@@ -51,6 +52,7 @@ export function SettingsPage() {
   const [savingPassword, setSavingPassword] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [csvUploading, setCsvUploading] = useState(false);
+  const [downloadingSample, setDownloadingSample] = useState(false);
   // per-row delete tracking — stores the id being deleted so only that row shows spinner
   const [csvDeletingId, setCsvDeletingId] = useState<string | null>(null);
   const [playbookDeletingId, setPlaybookDeletingId] = useState<string | null>(null);
@@ -302,6 +304,20 @@ export function SettingsPage() {
     }
   };
 
+  const onDownloadSample = async () => {
+    setDownloadingSample(true);
+    try {
+      await api.downloadSampleTemplate();
+    } catch (err: unknown) {
+      toast(
+        err instanceof Error ? err.message : "Could not download the sample data. Please try again.",
+        "error"
+      );
+    } finally {
+      setDownloadingSample(false);
+    }
+  };
+
   const onDeleteIngestJob = async (jobId: string) => {
     setCsvDeletingId(jobId);
     try {
@@ -524,10 +540,20 @@ export function SettingsPage() {
               <p className="text-xs text-surface-400 mt-1">
                 Primary setup for most companies: upload a ZIP with products.csv, orders.csv,
                 and order_items.csv. Investigations stay locked until this company has data.
+                No data ready yet? Grab the sample ZIP below to try investigations immediately.
               </p>
             </div>
             {isAdmin ? (
-              <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Download className="w-3.5 h-3.5" />}
+                  loading={downloadingSample}
+                  onClick={() => void onDownloadSample()}
+                >
+                  Download Sample CSV
+                </Button>
                 <input
                   ref={csvRef}
                   type="file"
@@ -544,7 +570,7 @@ export function SettingsPage() {
                 >
                   Upload CSV ZIP
                 </Button>
-              </>
+              </div>
             ) : null}
           </div>
           <div className="app-section-body space-y-3">

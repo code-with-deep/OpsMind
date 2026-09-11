@@ -571,6 +571,37 @@ export const api = {
     return response.json();
   },
 
+  /** Download the sample CSV ZIP (own standalone dataset — not the shared demo
+   * tenant's data) and save it via the browser's normal download flow. */
+  async downloadSampleTemplate(): Promise<void> {
+    const base = getApiBaseUrl();
+    const headers = new Headers();
+    const token = getAccessToken();
+    const apiKey = getApiKey();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    else if (apiKey) headers.set("X-API-Key", apiKey);
+
+    const response = await fetch(`${base}/data/sample-template`, { headers });
+    if (response.status === 401) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+    if (!response.ok) {
+      throw new Error(await readErrorDetail(response));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "opsmind_sample_data.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+
   async listInvestigations(params?: {
     status?: string;
     limit?: number;

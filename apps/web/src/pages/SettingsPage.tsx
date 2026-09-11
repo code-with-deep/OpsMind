@@ -53,6 +53,7 @@ export function SettingsPage() {
   const [uploading, setUploading] = useState(false);
   const [csvUploading, setCsvUploading] = useState(false);
   const [downloadingSample, setDownloadingSample] = useState(false);
+  const [downloadingSamplePlaybooks, setDownloadingSamplePlaybooks] = useState(false);
   // per-row delete tracking — stores the id being deleted so only that row shows spinner
   const [csvDeletingId, setCsvDeletingId] = useState<string | null>(null);
   const [playbookDeletingId, setPlaybookDeletingId] = useState<string | null>(null);
@@ -333,6 +334,20 @@ export function SettingsPage() {
       toast("Could not delete the data file. Please try again.", "error");
     } finally {
       setCsvDeletingId(null);
+    }
+  };
+
+  const onDownloadSamplePlaybooks = async () => {
+    setDownloadingSamplePlaybooks(true);
+    try {
+      await api.downloadSamplePlaybooks();
+    } catch (err: unknown) {
+      toast(
+        err instanceof Error ? err.message : "Could not download the sample playbooks. Please try again.",
+        "error"
+      );
+    } finally {
+      setDownloadingSamplePlaybooks(false);
     }
   };
 
@@ -653,10 +668,20 @@ export function SettingsPage() {
               <h3 className="font-app-heading text-base text-white">Playbooks</h3>
               <p className="text-xs text-surface-400 mt-1">
                 Company SOPs are chunked and embedded for RAG — never shared with other tenants.
+                Sample playbooks pair with the sample CSV bundle above (same SKUs/carriers).
               </p>
             </div>
             {isAdmin ? (
-              <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Download className="w-3.5 h-3.5" />}
+                  loading={downloadingSamplePlaybooks}
+                  onClick={() => void onDownloadSamplePlaybooks()}
+                >
+                  Download Sample Playbooks
+                </Button>
                 <input
                   ref={fileRef}
                   type="file"
@@ -673,7 +698,7 @@ export function SettingsPage() {
                 >
                   Upload SOP
                 </Button>
-              </>
+              </div>
             ) : null}
           </div>
           <div className="app-section-body space-y-3">

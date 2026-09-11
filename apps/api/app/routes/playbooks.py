@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -26,6 +28,13 @@ from opsmind.guardrails.output import sanitize_output_payload
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
 
 _ALLOWED_SUFFIXES = {".md", ".markdown", ".txt"}
+
+SAMPLE_PLAYBOOKS_ZIP = (
+    Path(__file__).resolve().parents[4]
+    / "data"
+    / "sample_templates"
+    / "opsmind_sample_playbooks.zip"
+)
 
 
 def _soft_limits(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
@@ -72,6 +81,27 @@ def list_playbooks(
     }
     items = [_document_payload(d, counts.get(d.id, 0)) for d in docs]
     return sanitize_output_payload({"playbooks": items, "count": len(items)})
+
+
+@router.get("/sample-template")
+def download_sample_playbooks(
+    tenant: TenantContext = Depends(require_tenant_context),
+) -> FileResponse:
+    """Download the sample SOP playbooks (5 .md files, zipped) tuned to the
+    planted scenario in the sample CSV bundle (GET /data/sample-template) —
+    upload the CSV data first, then these, for grounded playbook citations.
+    Extract the ZIP and upload each .md individually via "Upload SOP".
+    """
+    if not SAMPLE_PLAYBOOKS_ZIP.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sample playbooks are not available on this deployment.",
+        )
+    return FileResponse(
+        SAMPLE_PLAYBOOKS_ZIP,
+        media_type="application/zip",
+        filename="opsmind_sample_playbooks.zip",
+    )
 
 
 @router.post("")

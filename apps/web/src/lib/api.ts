@@ -345,6 +345,37 @@ async function request<T>(
   return response.json();
 }
 
+/** Fetch an authenticated binary file and save it via the browser's normal
+ * download flow (auth needs a header, so a plain `<a href>` won't carry it). */
+async function downloadAuthedFile(path: string, filename: string): Promise<void> {
+  const base = getApiBaseUrl();
+  const headers = new Headers();
+  const token = getAccessToken();
+  const apiKey = getApiKey();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  else if (apiKey) headers.set("X-API-Key", apiKey);
+
+  const response = await fetch(`${base}${path}`, { headers });
+  if (response.status === 401) {
+    throw new Error("Your session has expired. Please sign in again.");
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response));
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 type AuthResponse = {
   access_token: string;
   token_type: string;
@@ -574,32 +605,14 @@ export const api = {
   /** Download the sample CSV ZIP (own standalone dataset — not the shared demo
    * tenant's data) and save it via the browser's normal download flow. */
   async downloadSampleTemplate(): Promise<void> {
-    const base = getApiBaseUrl();
-    const headers = new Headers();
-    const token = getAccessToken();
-    const apiKey = getApiKey();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    else if (apiKey) headers.set("X-API-Key", apiKey);
+    return downloadAuthedFile("/data/sample-template", "opsmind_sample_data.zip");
+  },
 
-    const response = await fetch(`${base}/data/sample-template`, { headers });
-    if (response.status === 401) {
-      throw new Error("Your session has expired. Please sign in again.");
-    }
-    if (!response.ok) {
-      throw new Error(await readErrorDetail(response));
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    try {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "opsmind_sample_data.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+  /** Download the sample SOP playbooks (5 .md files, zipped) tuned to the
+   * sample CSV bundle's planted scenario. Extract and upload each .md
+   * individually via "Upload SOP" — playbook uploads are one file at a time. */
+  async downloadSamplePlaybooks(): Promise<void> {
+    return downloadAuthedFile("/playbooks/sample-template", "opsmind_sample_playbooks.zip");
   },
 
   async listInvestigations(params?: {

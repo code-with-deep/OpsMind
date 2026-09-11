@@ -1,13 +1,23 @@
-# Sample CSV bundle
+# Sample CSV + playbook bundles
 
-`opsmind_sample_data.zip` is a ready-made, deterministic ecommerce dataset for
-trying OpsMind against **your own tenant** without writing CSVs by hand first.
-It is separate from the shared public demo tenant ("Try Live Demo") — this
-file uploads into *your* company's workspace via **Settings → Business data
-→ Upload CSV ZIP**, so it's private to you.
+Two ready-made, deterministic bundles for trying OpsMind against **your own
+tenant** without writing CSVs/SOPs by hand first. Both are separate from the
+shared public demo tenant ("Try Live Demo") — they upload into *your*
+company's workspace, so they're private to you. Download both from
+**Settings** (Business data section, and Playbooks section).
 
-Regenerate it with `python -m scripts.generate_sample_csv_bundle` (deterministic,
-fixed seed — same output every run) if the shape ever needs to change.
+- `opsmind_sample_data.zip` — CSV business data. Upload via **Settings →
+  Business data → Upload CSV ZIP**.
+  Regenerate: `python -m scripts.generate_sample_csv_bundle` (deterministic,
+  fixed seed — same output every run).
+- `opsmind_sample_playbooks.zip` — 5 SOP Markdown files (`playbooks/*.md`),
+  tuned to reference the exact SKUs/carriers in the CSV bundle above. Extract
+  it and upload each `.md` individually via **Settings → Playbooks → Upload
+  SOP** (playbook uploads are one file at a time).
+  Regenerate: `python -m scripts.generate_sample_playbooks_bundle`.
+
+Upload the CSV bundle first, then the playbooks, so investigations can cite
+both SQL evidence and matching SOP guidance.
 
 ## What's inside
 

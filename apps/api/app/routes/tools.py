@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from api.app.auth import require_tenant_context
 from api.app.config import get_settings
 from api.app.deps import get_tenant_session
+from api.app.errors import safe_internal_error
 from opsmind.domain.tenant import TenantContext
 from opsmind.guardrails.input import check_input_guardrails
 from opsmind.guardrails.output import sanitize_output_payload
@@ -118,8 +119,10 @@ def sql_run(
         )
     except SqlToolError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — surface DB/role issues clearly in demo
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        # P1-13: SqlToolError messages are author-controlled and safe to return;
+        # anything else (raw DB errors) must not leak to the client.
+        raise safe_internal_error(exc, context="sql_run") from exc
 
     return sanitize_output_payload(
         {
@@ -162,7 +165,8 @@ def rag_query(
     except RagToolError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # P1-13: never leak raw exception text to clients.
+        raise safe_internal_error(exc, context="rag_query") from exc
 
     return sanitize_output_payload(
         {

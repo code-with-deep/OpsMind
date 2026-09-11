@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -40,6 +41,7 @@ from opsmind.db.tenant_models import (
 )
 from opsmind.domain.tenant import TenantContext
 from opsmind.guardrails.output import sanitize_output_payload
+from opsmind.guardrails.rate_limit import rate_limit_by_ip, rate_limit_by_key
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -159,8 +161,10 @@ class CreateInviteBody(BaseModel):
 
 
 @router.post("/signup")
-def signup(body: SignupBody) -> dict[str, Any]:
+def signup(body: SignupBody, request: Request) -> dict[str, Any]:
     """Self-serve signup: create tenant + admin user, return JWT."""
+    # P1-12: throttle tenant creation per IP.
+    rate_limit_by_ip(request, bucket="signup", max_hits=5, window_seconds=3600)
     settings = get_settings()
     email = str(body.email).strip().lower()
     factory = get_owner_session_factory(settings.database_url_sync)
@@ -226,11 +230,21 @@ def signup(body: SignupBody) -> dict[str, Any]:
         return sanitize_output_payload(_issue_token(user, tenant))
 
 
+#: Precomputed PBKDF2 hash of a random value, used to keep login() constant-time
+#: when the account doesn't exist (P1-12 — otherwise "user not found" returns
+#: faster than "wrong password", which is an account-enumeration timing oracle).
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
+
+
 @router.post("/login")
-def login(body: LoginBody) -> dict[str, Any]:
+def login(body: LoginBody, request: Request) -> dict[str, Any]:
     settings = get_settings()
     email = str(body.email).strip().lower()
     factory = get_owner_session_factory(settings.database_url_sync)
+
+    # P1-12: throttle both per-IP and per-account login attempts.
+    rate_limit_by_ip(request, bucket="login", max_hits=20, window_seconds=300)
+    rate_limit_by_key(email, bucket="login_account", max_hits=10, window_seconds=300)
 
     with factory() as session:
         row = session.execute(
@@ -239,6 +253,9 @@ def login(body: LoginBody) -> dict[str, Any]:
             .where(User.email == email)
         ).first()
         if row is None:
+            # P1-12: still run a password verification against a dummy hash so the
+            # response time doesn't reveal whether the account exists.
+            verify_password(body.password, _DUMMY_PASSWORD_HASH)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
@@ -260,6 +277,83 @@ def login(body: LoginBody) -> dict[str, Any]:
                 detail="Your account access has been revoked. Please contact your workspace admin.",
             )
         return sanitize_output_payload(_issue_token(user, tenant))
+
+
+_DEMO_USER_EMAIL = "demo@opsmind.local"
+
+
+@router.post("/demo-login")
+def demo_login(request: Request) -> dict[str, Any]:
+    """Public one-click login into the seeded demo tenant (no signup needed).
+
+    Issues a short-lived JWT for a persistent, find-or-create demo user with
+    role="investigator" — the demo session can run investigations, browse
+    history/cases, and submit reviews, but every admin-only action (data
+    upload/delete, playbook management, invites, user management, tenant
+    rename) is already gated by require_admin and stays out of reach. Every
+    visitor shares the same demo user identity and the same seeded tenant —
+    this is a public showcase, not a private workspace.
+    """
+    settings = get_settings()
+    if not settings.enable_demo_login:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Demo login is not enabled on this deployment.",
+        )
+
+    # Public, unauthenticated endpoint — throttle per IP.
+    rate_limit_by_ip(request, bucket="demo_login", max_hits=30, window_seconds=600)
+
+    from opsmind.db.seed import DEMO_TENANT_ID
+
+    factory = get_owner_session_factory(settings.database_url_sync)
+    with factory() as session:
+        tenant = session.get(Tenant, DEMO_TENANT_ID)
+        if tenant is None or tenant.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Demo workspace is not available. Ask an admin to run the seed script.",
+            )
+
+        user = session.scalar(select(User).where(User.email == _DEMO_USER_EMAIL))
+        if user is None:
+            user = User(
+                id=uuid.uuid4(),
+                tenant_id=DEMO_TENANT_ID,
+                email=_DEMO_USER_EMAIL,
+                password_hash=None,  # no password login path for this account
+                role="investigator",
+                status="active",
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+        elif user.tenant_id != DEMO_TENANT_ID or user.status != "active":
+            # Demo account was reassigned or revoked out-of-band — fail closed
+            # rather than silently issuing a token for the wrong tenant.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Demo account is not in a usable state.",
+            )
+
+        token = create_access_token(
+            secret=settings.jwt_secret,
+            user_id=user.id,
+            tenant_id=DEMO_TENANT_ID,
+            email=user.email,
+            role=user.role,
+            expire_hours=max(1, settings.demo_login_jwt_expire_hours),
+            token_version=int(user.token_version or 0),
+        )
+        return sanitize_output_payload(
+            {
+                "access_token": token,
+                "token_type": "bearer",
+                "expires_in_hours": settings.demo_login_jwt_expire_hours,
+                "user": _user_payload(user, tenant),
+                "is_demo": True,
+            }
+        )
 
 
 @router.get("/me")
@@ -309,8 +403,11 @@ def change_password(
 
 
 @router.post("/forgot-password")
-def forgot_password(body: ForgotPasswordBody) -> dict[str, Any]:
+def forgot_password(body: ForgotPasswordBody, request: Request) -> dict[str, Any]:
     """Request a password-reset email. Always returns a generic message."""
+    # P1-12: throttle per IP (the per-account limit is already enforced below
+    # via PasswordResetToken row counting / auth_password_reset_max_per_hour).
+    rate_limit_by_ip(request, bucket="forgot_password", max_hits=10, window_seconds=3600)
     settings = get_settings()
     email = str(body.email).strip().lower()
     factory = get_owner_session_factory(settings.database_url_sync)
@@ -429,8 +526,10 @@ def reset_password(body: ResetPasswordBody) -> dict[str, Any]:
 
 
 @router.post("/join")
-def join_with_invite(body: JoinInviteBody) -> dict[str, Any]:
+def join_with_invite(body: JoinInviteBody, request: Request) -> dict[str, Any]:
     """Redeem invite code → create AccessRequest (pending admin approval). No JWT returned."""
+    # P1-12: throttle — invite codes are ~40 bits and brute-forceable without this.
+    rate_limit_by_ip(request, bucket="join", max_hits=10, window_seconds=600)
     settings = get_settings()
     email = str(body.email).strip().lower()
     code = body.invite_code.strip().upper()
@@ -580,12 +679,23 @@ def join_with_invite(body: JoinInviteBody) -> dict[str, Any]:
 
 
 @router.get("/request-status")
-def get_request_status(email: str, invite_code: str) -> dict[str, Any]:
-    """Poll access request status (no auth required — public, rate-limit by IP if needed later)."""
+def get_request_status(email: str, invite_code: str, request: Request) -> dict[str, Any]:
+    """Poll access request status (no auth required — public)."""
+    # P1-12: unauthenticated endpoint — throttle per IP.
+    rate_limit_by_ip(request, bucket="request_status", max_hits=30, window_seconds=60)
     settings = get_settings()
     normalized_email = email.strip().lower()
     code = invite_code.strip().upper()
     factory = get_owner_session_factory(settings.database_url_sync)
+
+    # P1-12: uniform "pending" response for both "invite unknown" and "no request
+    # found for this email" — otherwise 404-vs-200 is an account-enumeration
+    # oracle for anyone who has (or brute-forces, now rate-limited) an invite code.
+    pending_response = {
+        "status": "pending",
+        "message": "Your access request is pending admin review.",
+        "rejection_reason": None,
+    }
 
     with factory() as session:
         invite = session.scalar(
@@ -594,7 +704,7 @@ def get_request_status(email: str, invite_code: str) -> dict[str, Any]:
             )
         )
         if invite is None:
-            raise HTTPException(status_code=404, detail="Invite code not found")
+            return sanitize_output_payload(pending_response)
 
         req = session.scalar(
             select(AccessRequest).where(
@@ -603,7 +713,7 @@ def get_request_status(email: str, invite_code: str) -> dict[str, Any]:
             )
         )
         if req is None:
-            raise HTTPException(status_code=404, detail="No access request found for this email")
+            return sanitize_output_payload(pending_response)
 
         return sanitize_output_payload(
             {

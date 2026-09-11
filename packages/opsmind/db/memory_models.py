@@ -52,7 +52,12 @@ class Investigation(Base):
         back_populates="investigation"
     )
     findings: Mapped[list[Finding]] = relationship(back_populates="investigation")
-    reviews: Mapped[list[Review]] = relationship(back_populates="investigation")
+    # P2-7: order_by so `reviews[-1]` (used by list_investigations_view for
+    # "latest_review_decision") is actually the most recent review, not
+    # whatever order Postgres happens to return.
+    reviews: Mapped[list[Review]] = relationship(
+        back_populates="investigation", order_by="Review.created_at"
+    )
     case_summary: Mapped[Optional[CaseSummary]] = relationship(
         back_populates="investigation", uselist=False
     )

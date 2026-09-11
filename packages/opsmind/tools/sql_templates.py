@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# P2-9: cap on row-level (non-single-aggregate) templates so a wide date range
+# can't return an unbounded result set that gets fully materialized in Python
+# and JSON-fingerprinted. Aggregate-only templates (revenue_week_totals,
+# carrier_sla — grouped by the small set of carriers) don't need this.
+_ROW_LIMIT = 5000
+
 
 @dataclass(frozen=True)
 class SqlTemplate:
@@ -33,12 +39,13 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "revenue_by_day": SqlTemplate(
         key="revenue_by_day",
         description="Daily revenue and order counts for a date window.",
-        sql="""
+        sql=f"""
             SELECT metric_date, revenue, orders_count, cancelled_orders,
                    units_sold, return_count, sla_breach_count
             FROM daily_metrics
             WHERE metric_date BETWEEN :start_date AND :end_date
             ORDER BY metric_date
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("start_date", "end_date"),
         allowlisted_tables=("daily_metrics",),
@@ -64,7 +71,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "sku_revenue_mix": SqlTemplate(
         key="sku_revenue_mix",
         description="Revenue and units by SKU in a date window (completed orders).",
-        sql="""
+        sql=f"""
             SELECT p.sku, p.name,
                    ROUND(SUM(oi.line_total)::numeric, 2) AS revenue,
                    SUM(oi.quantity) AS units
@@ -75,6 +82,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
               AND o.status = 'completed'
             GROUP BY p.sku, p.name
             ORDER BY revenue DESC
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("start_date", "end_date"),
         allowlisted_tables=("order_items", "orders", "products"),
@@ -82,13 +90,14 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "inventory_by_sku": SqlTemplate(
         key="inventory_by_sku",
         description="Inventory snapshots for a SKU over a date window.",
-        sql="""
+        sql=f"""
             SELECT s.snapshot_date, p.sku, p.name, s.on_hand, s.reserved, s.available
             FROM inventory_snapshots s
             JOIN products p ON p.id = s.product_id
             WHERE p.sku = :sku
               AND s.snapshot_date BETWEEN :start_date AND :end_date
             ORDER BY s.snapshot_date
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("sku", "start_date", "end_date"),
         allowlisted_tables=("inventory_snapshots", "products"),
@@ -96,7 +105,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "inventory_low_stock": SqlTemplate(
         key="inventory_low_stock",
         description="SKUs that hit low available stock in a date window (stockout scan).",
-        sql="""
+        sql=f"""
             SELECT p.sku, p.name,
                    MIN(s.available) AS min_available,
                    MAX(s.available) AS max_available,
@@ -108,6 +117,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
             GROUP BY p.sku, p.name
             HAVING MIN(s.available) <= 2
             ORDER BY min_available ASC, zero_days DESC
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("start_date", "end_date"),
         allowlisted_tables=("inventory_snapshots", "products"),
@@ -132,12 +142,13 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "campaign_activity": SqlTemplate(
         key="campaign_activity",
         description="Campaigns overlapping a date window.",
-        sql="""
+        sql=f"""
             SELECT name, channel, start_date, end_date, discount_pct, featured_sku, notes
             FROM campaigns
             WHERE start_date <= :end_date
               AND end_date >= :start_date
             ORDER BY start_date
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("start_date", "end_date"),
         allowlisted_tables=("campaigns",),
@@ -145,7 +156,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "returns_by_reason": SqlTemplate(
         key="returns_by_reason",
         description="Returns grouped by reason and SKU in a date window.",
-        sql="""
+        sql=f"""
             SELECT r.reason, p.sku, p.name,
                    COUNT(*) AS return_count,
                    ROUND(SUM(r.refund_amount)::numeric, 2) AS refund_total
@@ -155,6 +166,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
             WHERE r.return_date BETWEEN :start_date AND :end_date
             GROUP BY r.reason, p.sku, p.name
             ORDER BY return_count DESC
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("start_date", "end_date"),
         allowlisted_tables=("returns", "order_items", "products"),
@@ -162,7 +174,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
     "cancelled_orders": SqlTemplate(
         key="cancelled_orders",
         description="Cancelled order counts by day in a window.",
-        sql="""
+        sql=f"""
             SELECT order_date, COUNT(*) AS cancelled_count,
                    ROUND(SUM(net_amount)::numeric, 2) AS cancelled_net
             FROM orders
@@ -170,6 +182,7 @@ SQL_TEMPLATES: dict[str, SqlTemplate] = {
               AND status = 'cancelled'
             GROUP BY order_date
             ORDER BY order_date
+            LIMIT {_ROW_LIMIT}
         """,
         required_params=("start_date", "end_date"),
         allowlisted_tables=("orders",),

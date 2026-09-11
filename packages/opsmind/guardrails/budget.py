@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class BudgetExceededError(RuntimeError):
@@ -55,11 +58,23 @@ def clear_run_budget(investigation_id: str) -> None:
 
 
 def consume_tool_budget(runtime: dict[str, Any], n: int = 1) -> None:
-    """Consume from the run budget (registry preferred, then runtime.budget)."""
+    """Consume from the run budget (registry preferred, then runtime.budget).
+
+    P2-11: this registry is process-local — with more than one worker/replica,
+    a run whose budget was registered on worker A is invisible to worker B, and
+    this silently no-op'd (unenforced budget) before. It still can't enforce
+    across processes without a shared store (Redis/Postgres), but it now logs
+    loudly so the gap is visible in logs instead of failing silently.
+    """
     inv_id = runtime.get("investigation_id")
     budget = get_run_budget(str(inv_id)) if inv_id else None
     if budget is None:
         budget = runtime.get("budget")
     if budget is None:
+        logger.warning(
+            "tool_budget_registry_miss investigation_id=%s — budget not enforced "
+            "for this call (registry not found; likely cross-process/replica gap)",
+            inv_id,
+        )
         return
     budget.consume(n)

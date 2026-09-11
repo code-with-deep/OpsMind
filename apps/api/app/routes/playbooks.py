@@ -93,6 +93,19 @@ async def upload_playbook(
     max_bytes = int(limits["max_playbook_upload_bytes"])
     max_count = int(limits["max_playbooks"])
 
+    # P0-7: Check Content-Length header before reading entire body into RAM.
+    content_length = file.headers.get("content-length")
+    if content_length:
+        try:
+            content_length_int = int(content_length)
+            if content_length_int > max_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Playbook exceeds soft limit of {max_bytes} bytes",
+                )
+        except ValueError:
+            pass  # Invalid header, continue with byte-checking below
+
     raw = await file.read()
     if len(raw) > max_bytes:
         raise HTTPException(

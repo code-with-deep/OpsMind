@@ -12,7 +12,7 @@ import {
   X,
   Compass,
 } from "lucide-react";
-import { api, clearSession, getAccessToken, getStoredUser } from "../../lib/api";
+import { api, clearSession, getAccessToken, getStoredUser, isDemoSession } from "../../lib/api";
 import { routes } from "../../lib/routes";
 import { Button } from "../common/Button";
 import { OpsMindLogo } from "../common/OpsMindLogo";
@@ -98,6 +98,7 @@ export function Header({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const sessionUser = getStoredUser();
   const hasJwt = Boolean(getAccessToken());
+  const isDemo = hasJwt && isDemoSession();
 
   // Display name: prefer tenant name, fall back to email prefix
   const displayName = sessionUser?.tenant?.name || sessionUser?.email?.split("@")[0] || "";
@@ -140,6 +141,14 @@ export function Header({
             <span className="font-app-heading text-base text-white tracking-tight whitespace-nowrap hidden sm:block">
               OpsMind
             </span>
+            {isDemo && (
+              <span
+                title="Shared public demo — data resets and is visible to other visitors"
+                className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-md bg-accent-500/15 border border-accent-500/30 text-accent-300 text-[10px] font-semibold uppercase tracking-wide"
+              >
+                Demo
+              </span>
+            )}
           </NavLink>
 
           {/* ── Primary nav (desktop) ────────────────────────────────── */}

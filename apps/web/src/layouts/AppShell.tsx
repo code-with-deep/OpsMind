@@ -24,7 +24,6 @@ export interface AppShellOutletContext {
   handleLaunchInvestigation: (question: string) => Promise<void>;
   handleSubmitReview: (payload: {
     decision: ReviewDecision;
-    reviewer: string;
     notes?: string;
   }) => Promise<void>;
   handleSelectSource: (sourceId: string) => void;
@@ -36,6 +35,10 @@ export interface AppShellOutletContext {
 
 type LaunchLocationState = {
   launchQuestion?: string;
+  /** Open the New Investigation modal (scenario picker) on arrival — used by
+   * the "Try Live Demo" landing-page flow so visitors land straight on the
+   * "select a scenario and test" picker instead of an empty console. */
+  openNewModal?: boolean;
 };
 
 type AppNotice = {
@@ -254,18 +257,25 @@ export function AppShell() {
   };
 
   useEffect(() => {
-    const launchQuestion = (location.state as LaunchLocationState | null)?.launchQuestion;
-    if (!launchQuestion || location.pathname !== routes.console) return;
+    const state = location.state as LaunchLocationState | null;
+    if (location.pathname !== routes.console) return;
 
-    void (async () => {
+    if (state?.launchQuestion) {
+      void (async () => {
+        navigate(routes.console, { replace: true, state: null });
+        await handleLaunchInvestigation(state.launchQuestion as string);
+      })();
+      return;
+    }
+
+    if (state?.openNewModal) {
       navigate(routes.console, { replace: true, state: null });
-      await handleLaunchInvestigation(launchQuestion);
-    })();
+      setIsNewModalOpen(true);
+    }
   }, [location.state, location.pathname, navigate]);
 
   const handleSubmitReview = async (payload: {
     decision: ReviewDecision;
-    reviewer: string;
     notes?: string;
   }) => {
     if (!currentInvestigation) return;

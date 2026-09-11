@@ -16,7 +16,6 @@ interface ReviewPanelProps {
   investigation: InvestigationDetail;
   onSubmitReview: (payload: {
     decision: ReviewDecision;
-    reviewer: string;
     notes?: string;
   }) => Promise<void>;
   loading?: boolean;
@@ -28,16 +27,16 @@ export function ReviewPanel({
   loading = false,
 }: ReviewPanelProps) {
   const [decision, setDecision] = useState<ReviewDecision>("approved");
-  const [reviewer, setReviewer] = useState("operator@opsmind.internal");
   const [notes, setNotes] = useState("");
   const reviews = investigation.reviews || [];
   const caseSummary = investigation.case_summary;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // P1-8: reviewer identity is derived server-side from the authenticated
+    // session — it is never sent by the client.
     onSubmitReview({
       decision,
-      reviewer: reviewer.trim(),
       notes: notes.trim() || undefined,
     });
   };
@@ -94,18 +93,6 @@ export function ReviewPanel({
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-surface-400">Reviewer</label>
-          <input
-            type="text"
-            required
-            value={reviewer}
-            onChange={(e) => setReviewer(e.target.value)}
-            className="app-search-input !pl-3"
-            placeholder="your@email.com"
-          />
         </div>
 
         <div className="space-y-1.5">

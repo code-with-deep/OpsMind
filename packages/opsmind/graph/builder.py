@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
 
@@ -39,27 +39,28 @@ def _route_after_critic(
     return "insufficient"
 
 
-def _fanout_passthrough(state: InvestigationState) -> dict[str, Any]:
-    """No-op join point so conditional planner can fan out to Data + Knowledge."""
-    return {}
-
-
 def build_investigation_graph():
     """
     Pipeline:
-      START → planner → case_memory → data_investigator → knowledge
-            → synthesizer → critic → recommender / insufficient_evidence → END
+      START → planner → case_memory → {data_investigator, knowledge} → synthesizer
+            → critic → recommender / insufficient_evidence → END
 
     case_memory enriches every first-pass investigation with similar approved cases
     from the tenant's history.  On retries (retry_count > 0) it returns cheaply
     without re-fetching.  Critic retries route back through planner → case_memory
-    → data_investigator so the graph topology stays simple.
+    → data_investigator/knowledge so the graph topology stays simple.
+
+    P2-13: data_investigator (SQL) and knowledge (RAG) read only from `plan` and
+    are independent of each other, so they fan out from case_memory in parallel
+    and fan back in at synthesizer — `findings` and `node_trace` are both
+    `operator.add`-reduced state channels, so LangGraph merges both branches'
+    contributions correctly. (Previously ran strictly sequentially behind an
+    unwired, dead `fanout` node that no edge ever pointed to.)
     """
     graph = StateGraph(InvestigationState)
 
     graph.add_node("planner", planner_node)
-    graph.add_node("case_memory", case_memory_node)   # NEW: case memory enrichment
-    graph.add_node("fanout", _fanout_passthrough)
+    graph.add_node("case_memory", case_memory_node)
     graph.add_node("data_investigator", data_investigator_node)
     graph.add_node("knowledge", knowledge_node)
     graph.add_node("synthesizer", synthesizer_node)
@@ -73,9 +74,11 @@ def build_investigation_graph():
         _route_after_planner,
         {"case_memory": "case_memory", "end": END},
     )
-    # case_memory always feeds into data_investigator
+    # Fan out: case_memory feeds both data_investigator and knowledge in parallel.
     graph.add_edge("case_memory", "data_investigator")
-    graph.add_edge("data_investigator", "knowledge")
+    graph.add_edge("case_memory", "knowledge")
+    # Fan in: synthesizer waits for both branches before running.
+    graph.add_edge("data_investigator", "synthesizer")
     graph.add_edge("knowledge", "synthesizer")
     graph.add_edge("synthesizer", "critic")
     graph.add_conditional_edges(

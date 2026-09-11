@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -13,6 +14,8 @@ from opsmind.db.session import get_owner_session_factory
 from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
 from opsmind.graph.events import update_investigation, write_event
 from opsmind.graph.state import InvestigationState
+
+logger = logging.getLogger(__name__)
 
 
 def _row_field(rows: list[Any], key: str) -> Any:
@@ -197,13 +200,30 @@ def synthesizer_node(state: InvestigationState) -> dict[str, Any]:
     inv_id = uuid.UUID(state["investigation_id"])
     tenant_id = tenant_id_from_runtime(runtime)
 
+    llm_error: str | None = None
     if llm_configured(runtime.get("llm_api_key")):
         try:
             hypothesis = _llm_hypothesis(state["question"], findings, runtime)
-        except (LLMError, Exception):
+        except LLMError as exc:
+            # P1-6: log + surface, never silently swallow.
+            llm_error = str(exc)
+            logger.warning(
+                "synthesizer_llm_fallback investigation_id=%s model=%s error=%s",
+                inv_id, runtime.get("llm_model_strong"), exc,
+            )
             hypothesis = _heuristic_hypothesis(findings)
+            hypothesis = hypothesis.model_copy(update={"degraded": True})
+        except Exception as exc:  # noqa: BLE001 — schema validation / unexpected shape
+            llm_error = str(exc)
+            logger.warning(
+                "synthesizer_llm_fallback investigation_id=%s model=%s error=%s",
+                inv_id, runtime.get("llm_model_strong"), exc,
+            )
+            hypothesis = _heuristic_hypothesis(findings)
+            hypothesis = hypothesis.model_copy(update={"degraded": True})
     else:
         hypothesis = _heuristic_hypothesis(findings)
+        hypothesis = hypothesis.model_copy(update={"degraded": True})
 
     factory = get_owner_session_factory(runtime["database_url_sync"])
     with factory() as session:
@@ -216,8 +236,17 @@ def synthesizer_node(state: InvestigationState) -> dict[str, Any]:
             payload={
                 "confidence": hypothesis.confidence,
                 "drivers": hypothesis.drivers,
+                "degraded": hypothesis.degraded,
             },
         )
+        if llm_error:
+            write_event(
+                session,
+                tenant_id=tenant_id,
+                investigation_id=inv_id,
+                event_type="agent_synthesizer_degraded",
+                payload={"error": llm_error[:1000]},
+            )
         update_investigation(
             session,
             investigation_id=inv_id,
@@ -225,7 +254,10 @@ def synthesizer_node(state: InvestigationState) -> dict[str, Any]:
             confidence=hypothesis.confidence,
         )
 
-    return {
+    out: dict[str, Any] = {
         "hypothesis": hypothesis.model_dump(),
         "node_trace": ["synthesizer"],
     }
+    if llm_error:
+        out["errors"] = [f"synthesizer_llm_fallback: {llm_error}"]
+    return out

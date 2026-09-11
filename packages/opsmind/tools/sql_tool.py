@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 import uuid
@@ -81,7 +82,19 @@ def get_readonly_engine(database_url_readonly: str) -> Engine:
     global _READONLY_ENGINE, _READONLY_SESSION
     if _READONLY_ENGINE is None:
         url = database_url_readonly.replace("postgresql+asyncpg://", "postgresql://")
-        _READONLY_ENGINE = create_engine(url, pool_pre_ping=True, pool_size=3, max_overflow=5)
+        # P2-8: pool sizing configurable for deployment tuning (was a hardcoded
+        # pool_size=3 which exhausts fast — every investigation runs ~10-15 SQL
+        # templates, each opening a session here).
+        # P2-9 (partial): statement_timeout bounds a runaway query so a wide
+        # date-range template can't hold a pooled connection indefinitely.
+        _READONLY_ENGINE = create_engine(
+            url,
+            pool_pre_ping=True,
+            pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "10")),
+            max_overflow=int(os.getenv("DB_READONLY_POOL_MAX_OVERFLOW", "10")),
+            pool_recycle=int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800")),
+            connect_args={"options": "-c statement_timeout=15000"},
+        )
         _READONLY_SESSION = sessionmaker(_READONLY_ENGINE, expire_on_commit=False)
     return _READONLY_ENGINE
 

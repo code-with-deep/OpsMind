@@ -17,19 +17,64 @@ def _finding_kinds(findings: list[dict[str, Any]]) -> set[str]:
     return {str(f.get("kind") or "") for f in findings}
 
 
-def _text_blob(findings: list[dict[str, Any]], hypothesis: dict[str, Any]) -> str:
-    parts: list[str] = []
+def _sql_findings_by_purpose_kw(
+    findings: list[dict[str, Any]], *keywords: str
+) -> list[dict[str, Any]]:
+    out = []
     for f in findings:
-        parts.append(str(f.get("purpose") or ""))
-        parts.append(str((f.get("evidence") or {}).get("claim") or ""))
-        for row in f.get("rows") or []:
-            parts.append(str(row))
-        for hit in f.get("hits") or []:
-            parts.append(str(hit.get("doc_key") or ""))
-            parts.append(str(hit.get("title") or ""))
-    parts.extend(str(d) for d in (hypothesis.get("drivers") or []))
-    parts.append(str(hypothesis.get("summary") or ""))
-    return " ".join(parts).lower()
+        if f.get("kind") != "sql":
+            continue
+        purpose = str(f.get("purpose") or "").lower()
+        if any(kw in purpose for kw in keywords):
+            out.append(f)
+    return out
+
+
+def _driver_signals_from_rows(findings: list[dict[str, Any]]) -> dict[str, bool]:
+    """P1-7 fix: determine real driver coverage from actual SQL row VALUES, not
+    from planner-authored `purpose` labels or template-key substrings baked into
+    the generic evidence claim text. Those always match their own template name
+    (e.g. a `carrier_sla` finding's claim always contains "carrier"), which made
+    this signal true on almost every run regardless of what the data showed.
+    """
+
+    def _num(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    inv_findings = _sql_findings_by_purpose_kw(findings, "inventory", "stockout", "low-stock")
+    stockout = any(
+        isinstance(r, dict)
+        and (_num(r.get("min_available")) <= 2 or _num(r.get("available")) <= 2 or _num(r.get("zero_days")) > 0)
+        for f in inv_findings
+        for r in (f.get("rows") or [])
+    )
+
+    carrier_findings = _sql_findings_by_purpose_kw(findings, "carrier")
+    carrier_sla = any(
+        isinstance(r, dict) and _num(r.get("late_count")) > 0
+        for f in carrier_findings
+        for r in (f.get("rows") or [])
+    )
+
+    promo_findings = _sql_findings_by_purpose_kw(findings, "promo", "campaign")
+    promo = any((f.get("rows") or []) for f in promo_findings)
+
+    returns_findings = _sql_findings_by_purpose_kw(findings, "return")
+    returns = any(
+        isinstance(r, dict) and _num(r.get("return_count")) > 0
+        for f in returns_findings
+        for r in (f.get("rows") or [])
+    )
+
+    return {
+        "stockout_or_inventory": stockout,
+        "carrier_sla": carrier_sla,
+        "promo": promo,
+        "returns": returns,
+    }
 
 
 def score_critique(
@@ -44,7 +89,6 @@ def score_critique(
     """Score evidence coverage → pass | retry | fail_soft."""
     gaps: list[str] = list(hypothesis.get("gaps") or [])
     kinds = _finding_kinds(findings)
-    blob = _text_blob(findings, hypothesis)
     q = (question or "").lower()
     err_blob = " ".join(errors or []).lower()
 
@@ -65,27 +109,10 @@ def score_critique(
 
     revenueish = any(k in q for k in ("revenue", "sales", "decrease", "drop"))
     if revenueish or findings:
-        driver_signals = {
-            "stockout_or_inventory": any(
-                k in blob
-                for k in (
-                    "stockout",
-                    "inventory",
-                    "available",
-                    "on_hand",
-                    "low-stock",
-                    "low stock",
-                    "zero_days",
-                )
-            ),
-            "carrier_sla": any(
-                k in blob for k in ("carrier", "sla", "delay", "delivered_late", "late_count")
-            ),
-            "promo": any(
-                k in blob for k in ("campaign", "promo", "discount", "featured_sku")
-            ),
-            "returns": any(k in blob for k in ("return", "defective", "refund")),
-        }
+        # P1-7: signals now come from actual SQL row values (see
+        # _driver_signals_from_rows), not from keyword-matching planner `purpose`
+        # labels or template-key text that is guaranteed present regardless of data.
+        driver_signals = _driver_signals_from_rows(findings)
         if findings and sum(1 for v in driver_signals.values() if v) < 1:
             gaps.append("missing_driver_coverage")
 

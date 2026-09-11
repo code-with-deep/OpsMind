@@ -28,26 +28,23 @@ class RevokeBody(BaseModel):
     reason: Optional[str] = None
 
 
-def _request_to_dict(req: AccessRequest, session: Session) -> dict[str, Any]:
-    reviewer_email: Optional[str] = None
-    if req.reviewed_by:
-        reviewer = session.get(User, req.reviewed_by)
-        reviewer_email = reviewer.email if reviewer else None
-
-    invite_prefix: Optional[str] = None
-    if req.invite_code_id:
-        invite = session.get(InviteCode, req.invite_code_id)
-        invite_prefix = invite.code_prefix if invite else None
-
+def _request_to_dict(
+    req: AccessRequest,
+    *,
+    reviewer_emails: dict[uuid.UUID, str],
+    invite_prefixes: dict[uuid.UUID, str],
+) -> dict[str, Any]:
     return {
         "id": str(req.id),
         "requester_email": req.requester_email,
         "status": req.status,
         "created_at": req.created_at.isoformat() if req.created_at else None,
         "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
-        "reviewed_by_email": reviewer_email,
+        "reviewed_by_email": reviewer_emails.get(req.reviewed_by) if req.reviewed_by else None,
         "rejection_reason": req.rejection_reason,
-        "invite_code_prefix": invite_prefix,
+        "invite_code_prefix": (
+            invite_prefixes.get(req.invite_code_id) if req.invite_code_id else None
+        ),
     }
 
 
@@ -64,9 +61,29 @@ def list_access_requests(
     q = q.order_by(AccessRequest.created_at.desc())
 
     rows = session.scalars(q).all()
+
+    # P2-6: batch-load reviewers/invites instead of one query per row.
+    reviewer_ids = {r.reviewed_by for r in rows if r.reviewed_by}
+    invite_ids = {r.invite_code_id for r in rows if r.invite_code_id}
+    reviewer_emails: dict[uuid.UUID, str] = {}
+    if reviewer_ids:
+        for u in session.scalars(select(User).where(User.id.in_(reviewer_ids))).all():
+            reviewer_emails[u.id] = u.email
+    invite_prefixes: dict[uuid.UUID, str] = {}
+    if invite_ids:
+        for inv in session.scalars(
+            select(InviteCode).where(InviteCode.id.in_(invite_ids))
+        ).all():
+            invite_prefixes[inv.id] = inv.code_prefix
+
     return sanitize_output_payload(
         {
-            "requests": [_request_to_dict(r, session) for r in rows],
+            "requests": [
+                _request_to_dict(
+                    r, reviewer_emails=reviewer_emails, invite_prefixes=invite_prefixes
+                )
+                for r in rows
+            ],
             "count": len(rows),
         }
     )
@@ -172,19 +189,33 @@ def list_access_users(
     q = q.order_by(User.created_at.asc())
 
     rows = session.scalars(q).all()
-    result = []
-    for u in rows:
-        # Look up the access request for this user (if any)
-        req = session.scalar(
+
+    # P2-6: batch-load approved access requests + their reviewers instead of two
+    # queries per user (one for the request, one for the reviewer).
+    user_ids = {u.id for u in rows}
+    requests_by_user: dict[uuid.UUID, AccessRequest] = {}
+    if user_ids:
+        for req in session.scalars(
             select(AccessRequest).where(
-                AccessRequest.user_id == u.id,
+                AccessRequest.user_id.in_(user_ids),
                 AccessRequest.status == "approved",
             )
-        )
+        ).all():
+            if req.user_id is not None:
+                requests_by_user[req.user_id] = req
+
+    reviewer_ids = {r.reviewed_by for r in requests_by_user.values() if r.reviewed_by}
+    reviewer_emails: dict[uuid.UUID, str] = {}
+    if reviewer_ids:
+        for rv in session.scalars(select(User).where(User.id.in_(reviewer_ids))).all():
+            reviewer_emails[rv.id] = rv.email
+
+    result = []
+    for u in rows:
+        req = requests_by_user.get(u.id)
         approved_by_email: Optional[str] = None
         if req and req.reviewed_by:
-            reviewer = session.get(User, req.reviewed_by)
-            approved_by_email = reviewer.email if reviewer else None
+            approved_by_email = reviewer_emails.get(req.reviewed_by)
 
         result.append(
             {

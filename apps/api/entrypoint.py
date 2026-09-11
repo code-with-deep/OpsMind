@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 import sys
 
+# P2-16: arbitrary fixed key for a Postgres advisory lock guarding migrations —
+# prevents multiple replicas starting simultaneously from racing `alembic upgrade`.
+_MIGRATION_LOCK_KEY = 0x4F70734D696E64  # "OpsMind" as a rough numeric tag
+
 
 def _run_migrations() -> None:
     """Run alembic upgrade head before starting the server.
@@ -12,46 +16,51 @@ def _run_migrations() -> None:
     Also widens alembic_version.version_num to VARCHAR(128) when needed,
     because the default Alembic DDL only creates VARCHAR(32) which is too
     narrow for migration names longer than 32 characters.
+
+    P2-16: migration failure is now FATAL (process exits non-zero) instead of
+    printing a warning and starting the server against a possibly half-migrated
+    schema. A Postgres advisory lock also serializes migrations across replicas
+    that start concurrently.
     """
+    import sqlalchemy
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_cfg = Config("/app/alembic.ini")
+
+    # Resolve sync DB URL (Alembic needs a non-async driver)
+    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get(
+        "DATABASE_URL_SYNC_DOCKER"
+    )
+    if db_url:
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+    engine = sqlalchemy.create_engine(
+        db_url or alembic_cfg.get_main_option("sqlalchemy.url")
+    )
     try:
-        import sqlalchemy
-        from alembic import command
-        from alembic.config import Config
-
-        alembic_cfg = Config("/app/alembic.ini")
-
-        # Resolve sync DB URL (Alembic needs a non-async driver)
-        db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get(
-            "DATABASE_URL_SYNC_DOCKER"
-        )
-        if db_url:
-            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
-
-        # Widen version_num column if the DB is already initialised but narrow
-        try:
-            engine = sqlalchemy.create_engine(
-                db_url or alembic_cfg.get_main_option("sqlalchemy.url")
-            )
-            with engine.connect() as conn:
-                conn.execute(
-                    sqlalchemy.text(
-                        "ALTER TABLE alembic_version "
-                        "ALTER COLUMN version_num TYPE VARCHAR(128)"
+        with engine.connect() as conn:
+            conn.execute(sqlalchemy.text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+            try:
+                # Widen version_num column if the DB is already initialised but narrow.
+                try:
+                    conn.execute(
+                        sqlalchemy.text(
+                            "ALTER TABLE alembic_version "
+                            "ALTER COLUMN version_num TYPE VARCHAR(128)"
+                        )
                     )
-                )
-                conn.commit()
-            engine.dispose()
-        except Exception:
-            pass  # table doesn't exist yet, or already wide enough — fine
+                    conn.commit()
+                except Exception:
+                    conn.rollback()  # table doesn't exist yet, or already wide enough — fine
 
-        command.upgrade(alembic_cfg, "head")
-        print("[entrypoint] Alembic migrations applied.", flush=True)
-    except Exception as exc:
-        print(
-            f"[entrypoint] WARNING: migration step failed: {exc}",
-            file=sys.stderr,
-            flush=True,
-        )
+                command.upgrade(alembic_cfg, "head")
+                print("[entrypoint] Alembic migrations applied.", flush=True)
+            finally:
+                conn.execute(sqlalchemy.text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+                conn.commit()
+    finally:
+        engine.dispose()
 
 
 def main() -> None:
@@ -67,8 +76,13 @@ def main() -> None:
         print(f"API_PORT must be an integer, got: {port_raw!r}", file=sys.stderr)
         sys.exit(1)
 
-    # Apply any pending DB migrations before accepting traffic
-    _run_migrations()
+    # Apply any pending DB migrations before accepting traffic. Fatal on failure
+    # (P2-16) — never serve traffic against a schema that failed to migrate.
+    try:
+        _run_migrations()
+    except Exception as exc:
+        print(f"[entrypoint] FATAL: migration step failed: {exc}", file=sys.stderr, flush=True)
+        sys.exit(1)
 
     import uvicorn
 

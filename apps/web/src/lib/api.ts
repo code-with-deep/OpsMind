@@ -9,6 +9,7 @@ import {
 const API_KEY_STORAGE = "opsmind_api_key";
 const JWT_STORAGE = "opsmind_access_token";
 const USER_STORAGE = "opsmind_user";
+const DEMO_FLAG_STORAGE = "opsmind_is_demo";
 
 /** Demo-tenant bootstrap key (must be pasted explicitly — never auto-injected). */
 export const DEMO_BOOTSTRAP_API_KEY = "change-me-opsmind-dev-key";
@@ -157,10 +158,20 @@ export function setStoredUser(user: AuthUser | null): void {
   localStorage.setItem(USER_STORAGE, JSON.stringify(user));
 }
 
+export function isDemoSession(): boolean {
+  return localStorage.getItem(DEMO_FLAG_STORAGE) === "1";
+}
+
+function setDemoFlag(isDemo: boolean): void {
+  if (isDemo) localStorage.setItem(DEMO_FLAG_STORAGE, "1");
+  else localStorage.removeItem(DEMO_FLAG_STORAGE);
+}
+
 export function clearSession(): void {
   setAccessToken(null);
   setStoredUser(null);
   clearApiKey();
+  setDemoFlag(false);
 }
 
 export function getApiKey(): string {
@@ -310,7 +321,21 @@ async function request<T>(
   });
 
   if (response.status === 401) {
-    throw new Error("Invalid email or password.");
+    // P1-9: only /auth/login (and /auth/change-password, which re-verifies the
+    // current password) legitimately means "wrong credentials". Everywhere else
+    // a 401 means the session expired — clear it and send the user back to
+    // /login instead of showing a nonsensical "wrong password" message on
+    // whatever page they happened to be on.
+    const isCredentialCheck =
+      normalizedPath === "/auth/login" || normalizedPath === "/auth/change-password";
+    if (isCredentialCheck) {
+      throw new Error(await readErrorDetail(response));
+    }
+    clearSession();
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login?notice=session_expired";
+    }
+    throw new Error("Your session has expired. Please sign in again.");
   }
 
   if (!response.ok) {
@@ -325,11 +350,13 @@ type AuthResponse = {
   token_type: string;
   expires_in_hours: number;
   user: AuthUser;
+  is_demo?: boolean;
 };
 
 function persistAuth(res: AuthResponse): AuthResponse {
   setAccessToken(res.access_token);
   setStoredUser(res.user);
+  setDemoFlag(Boolean(res.is_demo));
   return res;
 }
 
@@ -364,6 +391,14 @@ export const api = {
     const res = await request<AuthResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
+    }, { auth: false });
+    return persistAuth(res);
+  },
+
+  /** One-click login into the seeded public demo tenant — no signup needed. */
+  async demoLogin(): Promise<AuthResponse> {
+    const res = await request<AuthResponse>("/auth/demo-login", {
+      method: "POST",
     }, { auth: false });
     return persistAuth(res);
   },
@@ -576,7 +611,6 @@ export const api = {
     investigationId: string,
     payload: {
       decision: ReviewDecision;
-      reviewer: string;
       notes?: string;
     }
   ): Promise<{

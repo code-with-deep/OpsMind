@@ -11,14 +11,24 @@ type LoginLocationState = {
   notice?: string;
 };
 
+const QUERY_NOTICES: Record<string, string> = {
+  session_expired: "Your session has expired. Please sign in again.",
+  access_approved: "Your access request was approved. You can now sign in.",
+};
+
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const navState = (location.state as LoginLocationState | null) || null;
+  // P1-9: hard redirects (e.g. after a 401 clears the session) carry the notice
+  // as a query param rather than router state.
+  const queryNotice = new URLSearchParams(location.search).get("notice");
+  const notice = navState?.notice || (queryNotice ? QUERY_NOTICES[queryNotice] : undefined);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
 
   useEffect(() => {
     if (!getAccessToken()) return;
@@ -55,6 +65,19 @@ export function LoginPage() {
     }
   };
 
+  const onTryDemo = async () => {
+    setDemoLoading(true);
+    setError(null);
+    try {
+      await api.demoLogin();
+      navigate(routes.console, { replace: true, state: { openNewModal: true } });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not start the demo. Please try again.");
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
   return (
     <AuthLayout
       title="Sign in"
@@ -76,9 +99,9 @@ export function LoginPage() {
         </p>
       }
     >
-      {navState?.notice ? (
+      {notice ? (
         <p className="text-xs text-accent-200 bg-accent-950/40 border border-accent-800/50 rounded-lg px-3 py-2">
-          {navState.notice}
+          {notice}
         </p>
       ) : null}
       <form className="space-y-3.5" onSubmit={onSubmit}>
@@ -123,6 +146,18 @@ export function LoginPage() {
           Sign in
         </Button>
       </form>
+      <div className="relative py-1 text-center">
+        <span className="text-[11px] uppercase tracking-wider text-surface-600">or</span>
+      </div>
+      <Button
+        type="button"
+        variant="secondary"
+        className="w-full"
+        loading={demoLoading}
+        onClick={() => void onTryDemo()}
+      >
+        Try Live Demo — no signup
+      </Button>
     </AuthLayout>
   );
 }

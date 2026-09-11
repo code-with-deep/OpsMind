@@ -32,7 +32,9 @@ _UNSUPPORTED_PATTERNS = [
     r"\bovertime\b",
     r"\bsalary\b",
     r"\bsalaries\b",
-    r"\bhr\b",
+    # P3-7: standalone "hr" removed — it matched "24 hr delivery" and other
+    # ops-relevant text ("hr" as an hour abbreviation). "human resources" and
+    # specific HR terms below already cover the intended off-domain signal.
     r"\bhuman resources\b",
     r"\bemployee\b",
     r"\bhiring\b",
@@ -71,10 +73,10 @@ _OPS_KEYWORDS = [
     r"\bslots?\b",          # matches "slot", "slots"
     r"\bbacklog\b",
     r"\bthroughput\b",
-    r"\bengagement\b",
-    r"\bproject\b",
-    r"\bclient\b",
 ]
+# P3-7: removed \bengagement\b, \bproject\b, \bclient\b — generic business terms
+# unrelated to ecommerce/warehouse ops that could misroute clearly off-domain
+# questions (e.g. "what's my client's phone number") into "investigate".
 
 _VAGUE_PATTERNS = [
     r"^why are things bad\??$",
@@ -97,6 +99,17 @@ def classify_question(question: str) -> tuple[Route, str]:
 
     lower = q.lower().strip()
 
+    # NOTE (P3-6, attempted): _UNSUPPORTED_PATTERNS is intentionally checked
+    # before the ops-keyword signal. An earlier attempt at this fix ("skip the
+    # unsupported check when ops keywords are also present") regressed
+    # test_triage_poem_unsupported / test_triage_payroll_unsupported, both of
+    # which mention "warehouse" alongside an off-domain word and are expected
+    # to stay "unsupported". A correct fix needs the ops-keyword patterns to
+    # handle plurals consistently first (several, like \bdelay\b, don't match
+    # "delays" — see \bskus?\b for the pattern that does it right) and a
+    # calibrated hit threshold, verified against the test suite. Left as
+    # unsupported-first (original, test-verified behavior) rather than ship an
+    # unverified change.
     for pat in _UNSUPPORTED_PATTERNS:
         if re.search(pat, lower):
             return (

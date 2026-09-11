@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
+from datetime import timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from opsmind.agents.llm import LLMError, chat_json, llm_configured
 from opsmind.agents.schemas import InvestigationPlan, RagStep, SqlStep
@@ -14,10 +18,7 @@ from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runti
 from opsmind.graph.events import update_investigation, write_event
 from opsmind.graph.state import InvestigationState
 from opsmind.tools.dates import (
-    PROBLEM_WEEK_END,
-    PROBLEM_WEEK_START,
-    PRIOR_WEEK_END,
-    PRIOR_WEEK_START,
+    DateRange,
     extract_compare_windows_from_question,
     extract_skus_from_text,
     normalize_date_range,
@@ -32,12 +33,22 @@ _MONEY_CLAIM_RE = re.compile(
 
 
 def _windows_for_question(question: str) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+    """P1-3 fix: Use relative dates (last_week) by default, not hardcoded demo window."""
     parsed = extract_compare_windows_from_question(question)
     if parsed:
         problem, prior = parsed
     else:
-        problem = normalize_date_range("problem_week")
-        prior = normalize_date_range("prior_week")
+        # P1-3: Use relative dates for real tenants. Only use problem_week if explicitly requested
+        # (which would only happen in test/demo contexts).
+        problem = normalize_date_range("last_week")
+        prior = normalize_date_range("last_week")
+        # Adjust prior to be the week before problem week
+        prior_end = problem.start - timedelta(days=1)
+        span = (problem.end - problem.start).days
+        prior_start = prior_end - timedelta(days=span)
+        prior = DateRange(
+            prior_start, prior_end, "prior_to_problem", f"{prior_start.isoformat()} to {prior_end.isoformat()}"
+        )
     p = {"start_date": problem.start.isoformat(), "end_date": problem.end.isoformat()}
     prior_p = {"start_date": prior.start.isoformat(), "end_date": prior.end.isoformat()}
     return (
@@ -292,8 +303,6 @@ def _llm_plan(
         "Prefer tenant-agnostic playbook queries (no demo brand names like FastShip). "
         f"Resolved problem window: {problem_window['start']} to {problem_window['end']}; "
         f"prior window: {prior_window['start']} to {prior_window['end']}. "
-        f"(Legacy fallbacks if no dates in question: problem {PROBLEM_WEEK_START}–"
-        f"{PROBLEM_WEEK_END}, prior {PRIOR_WEEK_START}–{PRIOR_WEEK_END}.) "
         f"Critic gaps to address: {gap_text}."
     )
     user = (
@@ -376,19 +385,32 @@ def planner_node(state: InvestigationState) -> dict[str, Any]:
             "assumptions": assumptions,
         }
 
-    try:
-        if llm_configured(runtime.get("llm_api_key")):
-            try:
-                plan = _llm_plan(question, runtime, gaps=gaps if is_retry else None)
-            except (LLMError, Exception):
-                plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
-        else:
+    # P1-6: catch LLMError specifically (not a redundant `except (LLMError, Exception)`,
+    # which is just `except Exception`), log the degradation, and actually surface it —
+    # the previous code set `err = None` on this path even when the LLM call failed.
+    err: str | None = None
+    if llm_configured(runtime.get("llm_api_key")):
+        try:
+            plan = _llm_plan(question, runtime, gaps=gaps if is_retry else None)
+        except LLMError as exc:
+            err = str(exc)
+            logger.warning(
+                "planner_llm_fallback investigation_id=%s model=%s error=%s",
+                inv_id, runtime.get("llm_model_fast"), exc,
+            )
             plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
-    except Exception as exc:  # noqa: BLE001
-        plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
-        err = str(exc)
+            plan = plan.model_copy(update={"degraded": True})
+        except Exception as exc:  # noqa: BLE001 — schema validation / unexpected shape
+            err = str(exc)
+            logger.warning(
+                "planner_llm_fallback investigation_id=%s model=%s error=%s",
+                inv_id, runtime.get("llm_model_fast"), exc,
+            )
+            plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
+            plan = plan.model_copy(update={"degraded": True})
     else:
-        err = None
+        plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
+        plan = plan.model_copy(update={"degraded": True})
 
     factory = get_owner_session_factory(runtime["database_url_sync"])
     with factory() as session:
@@ -406,8 +428,17 @@ def planner_node(state: InvestigationState) -> dict[str, Any]:
                 "is_retry": is_retry,
                 "gaps": gaps,
                 "assumptions": assumptions,
+                "degraded": plan.degraded,
             },
         )
+        if err:
+            write_event(
+                session,
+                tenant_id=tenant_id,
+                investigation_id=inv_id,
+                event_type="agent_planner_degraded",
+                payload={"error": err[:1000]},
+            )
         update_investigation(
             session,
             investigation_id=inv_id,

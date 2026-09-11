@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from api.app.auth import require_admin, require_tenant_context
 from api.app.config import get_settings
 from api.app.deps import get_tenant_session
+from api.app.errors import safe_internal_error
 from opsmind.db.ingest_csv import (
     CsvIngestError,
     extract_csv_bundle,
@@ -97,6 +98,19 @@ async def upload_csv_bundle(
     max_bytes = int(limits["max_csv_upload_bytes"])
     max_rows = int(limits["max_csv_rows"])
 
+    # P0-7: Check Content-Length header before reading entire body into RAM.
+    content_length = file.headers.get("content-length")
+    if content_length:
+        try:
+            content_length_int = int(content_length)
+            if content_length_int > max_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"CSV upload exceeds soft limit of {max_bytes} bytes",
+                )
+        except ValueError:
+            pass  # Invalid header, continue with byte-checking below
+
     raw = await file.read()
     if len(raw) > max_bytes:
         raise HTTPException(
@@ -156,15 +170,16 @@ async def upload_csv_bundle(
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         job = session.get(IngestJob, job.id)
+        # P1-13: `job.error` is only ever shown to the tenant's own admins via
+        # GET /data/ingest-jobs, so storing the real message there is fine —
+        # but the HTTP response must not leak raw DB/library internals.
+        safe_error = safe_internal_error(exc, context="csv_ingest")
         if job is not None:
             job.status = "failed"
-            job.error = str(exc)
+            job.error = str(exc)[:2000]
             job.completed_at = datetime.now(timezone.utc)
             session.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"CSV ingest failed: {exc}",
-        ) from exc
+        raise safe_error from exc
 
     ready = tenant_data_ready(session, tenant.tenant_id)
     return sanitize_output_payload(
@@ -215,15 +230,14 @@ def delete_ingest_job(
 
     wiped = False
     if not remaining_done:
+        # P2-5: bulk DELETE instead of loading every row into the ORM identity
+        # map and issuing one DELETE per row (clear_tenant_business_data already
+        # does this correctly for the CSV-replace path — reuse the same pattern).
         for model in [
             Return, Shipment, InventorySnapshot, OrderItem,
             Order, Campaign, Carrier, Product, DailyMetric,
         ]:
-            rows = session.scalars(
-                select(model).where(model.tenant_id == tenant.tenant_id)  # type: ignore[attr-defined]
-            ).all()
-            for row in rows:
-                session.delete(row)
+            session.execute(delete(model).where(model.tenant_id == tenant.tenant_id))  # type: ignore[attr-defined]
         wiped = True
 
     session.commit()
@@ -249,7 +263,9 @@ def delete_csv_data(
     """
     tid = tenant.tenant_id
 
-    # Delete in FK-safe order (children before parents)
+    # Delete in FK-safe order (children before parents).
+    # P2-5: bulk DELETE (single statement per table) instead of loading every
+    # row into the ORM identity map and deleting one at a time.
     deleted: dict[str, int] = {}
     for model, label in [
         (Return, "returns"),
@@ -263,12 +279,10 @@ def delete_csv_data(
         (DailyMetric, "daily_metrics"),
         (IngestJob, "ingest_jobs"),
     ]:
-        rows = session.scalars(
-            select(model).where(model.tenant_id == tid)  # type: ignore[attr-defined]
-        ).all()
-        for row in rows:
-            session.delete(row)
-        deleted[label] = len(rows)
+        result = session.execute(
+            delete(model).where(model.tenant_id == tid)  # type: ignore[attr-defined]
+        )
+        deleted[label] = result.rowcount or 0
 
     session.commit()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -11,6 +12,8 @@ from opsmind.graph.events import write_event
 from opsmind.graph.state import InvestigationState
 from opsmind.guardrails.budget import BudgetExceededError, consume_tool_budget
 from opsmind.tools.rag_tool import RagToolError, run_rag_tool
+
+logger = logging.getLogger(__name__)
 
 
 def knowledge_node(state: InvestigationState) -> dict[str, Any]:
@@ -64,8 +67,16 @@ def knowledge_node(state: InvestigationState) -> dict[str, Any]:
             except BudgetExceededError as exc:
                 errors.append(str(exc))
                 break
-            except (RagToolError, Exception) as exc:  # noqa: BLE001
+            except RagToolError as exc:
+                # Author-controlled, safe to surface.
                 errors.append(f"rag:{query}: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                # P1-13: don't leak raw exception internals into persisted/returned errors.
+                logger.warning(
+                    "rag_tool_unexpected_error investigation_id=%s query=%s error=%s",
+                    inv_id, query, exc,
+                )
+                errors.append(f"rag:{query}: internal error while querying playbooks")
 
         write_event(
             session,

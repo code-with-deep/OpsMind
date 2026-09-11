@@ -97,6 +97,18 @@ def reset_graph_cache() -> None:
 reset_graph_cache()
 
 
+_SENSITIVE_RUNTIME_KEYS = {
+    "database_url_sync",
+    "database_url_readonly",
+    "llm_api_key",
+}
+
+
+def _strip_sensitive_from_runtime(runtime: dict[str, Any]) -> dict[str, Any]:
+    """Remove secrets from runtime before checkpoint (P0-4)."""
+    return {k: v for k, v in runtime.items() if k not in _SENSITIVE_RUNTIME_KEYS}
+
+
 def build_runtime(settings: Any, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     max_tools = int(getattr(settings, "max_tool_calls_per_run", 40))
     runtime = {
@@ -281,6 +293,11 @@ def run_investigation(
 
     try:
         final_state = graph.invoke(initial, config=config)
+        # P0-4: Strip sensitive keys before they are persisted further (P0-4).
+        # The runtime dict was already checkpointed by LangGraph, but we strip it
+        # here to avoid leaking in events/findings/audit logs.
+        if "runtime" in final_state:
+            final_state["runtime"] = _strip_sensitive_from_runtime(final_state["runtime"])
     except Exception as exc:  # noqa: BLE001
         with factory() as session:
             from opsmind.db.tenant_session import apply_tenant_session
@@ -448,10 +465,17 @@ def list_investigations_view(
 ) -> list[dict[str, Any]]:
     """List past investigations with summary metadata for the Operator Console (P6)."""
     from sqlalchemy import desc, select
+    from sqlalchemy.orm import selectinload
 
+    # P2-6: eager-load reviews/case_summary in 2 extra queries total instead of
+    # lazy-loading them per row (up to 100 rows → ~200 extra queries before).
     stmt = (
         select(Investigation)
         .where(Investigation.tenant_id == tenant_id)
+        .options(
+            selectinload(Investigation.reviews),
+            selectinload(Investigation.case_summary),
+        )
         .order_by(desc(Investigation.created_at))
     )
     if status and status.strip():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -12,6 +13,8 @@ from opsmind.graph.state import InvestigationState
 from opsmind.guardrails.budget import BudgetExceededError, consume_tool_budget
 from opsmind.tools.sql_tool import SqlToolError, run_sql_tool
 
+logger = logging.getLogger(__name__)
+
 
 def data_investigator_node(state: InvestigationState) -> dict[str, Any]:
     runtime = state.get("runtime") or {}
@@ -20,7 +23,12 @@ def data_investigator_node(state: InvestigationState) -> dict[str, Any]:
     sql_steps = plan.get("sql_steps") or []
     retry_count = int(state.get("retry_count") or 0)
     blocked = set(runtime.get("blocked_templates") or [])
-    # Test fixture: hide SQL on first pass to force Critic retry.
+    # P2-12: test-only fixture (see test_p4_self_correction.py) that forces a
+    # Critic retry by hiding SQL evidence on the first pass. Not reachable from
+    # any API route — `run_investigation(runtime_overrides=...)` is only ever
+    # called with this key set from tests/evals, never from request bodies
+    # (create_and_run_investigation / investigations_create do not accept or
+    # forward a runtime_overrides field from the client).
     if runtime.get("block_sql_on_first_pass") and retry_count == 0:
         blocked = blocked | {
             step.get("template_key")
@@ -71,8 +79,18 @@ def data_investigator_node(state: InvestigationState) -> dict[str, Any]:
             except BudgetExceededError as exc:
                 errors.append(str(exc))
                 break
-            except (SqlToolError, Exception) as exc:  # noqa: BLE001
+            except SqlToolError as exc:
+                # Author-controlled, safe to surface (allowlist/param violations etc).
                 errors.append(f"sql:{key}: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                # P1-13: raw DB/driver exceptions can contain table/column/constraint
+                # names or parameter values — log full detail, surface only a generic
+                # message in the persisted/returned errors list.
+                logger.warning(
+                    "sql_tool_unexpected_error investigation_id=%s template=%s error=%s",
+                    inv_id, key, exc,
+                )
+                errors.append(f"sql:{key}: internal error while executing this query")
 
         write_event(
             session,

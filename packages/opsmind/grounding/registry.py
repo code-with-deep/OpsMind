@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from dataclasses import dataclass
 from threading import Lock
 from typing import Any
+
+# P2-10: `default_registry` below is a process-wide singleton that every SQL/RAG
+# tool call registers into and NOTHING reads back — actual citation verification
+# (grounding/verifier.py) derives its valid-source-id set from `findings` in
+# graph state, not from this registry. Left unbounded, it grew for the life of
+# the process. Bounded to an LRU-style cap so it can't leak memory even though
+# it currently has no functional reader (kept for tests / future consumers).
+_MAX_RECORDS = 10_000
 
 
 @dataclass
@@ -17,14 +26,18 @@ class SourceRecord:
 class SourceIdRegistry:
     """Maps source_id → tool result metadata so claims can be verified later."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_records: int = _MAX_RECORDS) -> None:
         self._lock = Lock()
-        self._records: dict[str, SourceRecord] = {}
+        self._max_records = max_records
+        self._records: "OrderedDict[str, SourceRecord]" = OrderedDict()
 
     def register(self, source_id: str, kind: str, ref: dict[str, Any]) -> SourceRecord:
         record = SourceRecord(source_id=source_id, kind=kind, ref=ref)
         with self._lock:
             self._records[source_id] = record
+            self._records.move_to_end(source_id)
+            while len(self._records) > self._max_records:
+                self._records.popitem(last=False)  # evict oldest
         return record
 
     def get(self, source_id: str) -> SourceRecord | None:

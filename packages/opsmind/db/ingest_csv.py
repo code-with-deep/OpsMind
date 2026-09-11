@@ -230,6 +230,11 @@ def _derive_daily_metrics(session: Session, tenant_id: UUID) -> int:
     for item in items:
         items_by_order[item.order_id].append(item)
 
+    # P2-1: O(n) lookup instead of `next(o for o in orders if ...)` inside the
+    # shipments loop below, which was O(orders × shipments) — ~10^9 comparisons
+    # at the documented 50k-row soft limit.
+    orders_by_id: dict[int, Order] = {o.id: o for o in orders}
+
     for order in orders:
         d = order.order_date
         day_stats[d]["orders"] += 1
@@ -240,7 +245,7 @@ def _derive_daily_metrics(session: Session, tenant_id: UUID) -> int:
             day_stats[d]["units"] += sum(i.quantity for i in items_by_order.get(order.id, []))
 
     for ship in shipments:
-        order = next((o for o in orders if o.id == ship.order_id), None)
+        order = orders_by_id.get(ship.order_id)
         d = order.order_date if order else ship.ship_date
         day_stats[d]["fulfill_hours"].append(float(ship.delay_hours))
         if ship.delay_hours > 0 or ship.status in {"delivered_late", "delayed"}:

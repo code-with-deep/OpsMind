@@ -24,6 +24,8 @@ class InvestigationPlan(BaseModel):
     prior_window: dict[str, str]
     sql_steps: list[SqlStep] = Field(default_factory=list)
     rag_steps: list[RagStep] = Field(default_factory=list)
+    # P1-6: true when the LLM call failed/was unavailable and heuristic fallback ran.
+    degraded: bool = False
 
 
 class Hypothesis(BaseModel):
@@ -32,6 +34,8 @@ class Hypothesis(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=0.5)
     supporting_source_ids: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    # P1-6: true when the LLM call failed/was unavailable and heuristic fallback ran.
+    degraded: bool = False
 
 
 class Critique(BaseModel):
@@ -47,3 +51,6 @@ class Recommendation(BaseModel):
     claim_source_map: list[dict[str, Any]] = Field(default_factory=list)
     status: str = "completed"
     assumptions: list[str] = Field(default_factory=list)
+    # P1-6/P1-4: true when the LLM call failed/was unavailable and heuristic
+    # fallback text was shipped instead. Lets the UI show a "degraded" badge.
+    degraded: bool = False

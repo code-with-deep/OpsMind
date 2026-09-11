@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     opsmind_api_key: str
 
     # MT2 — web session JWT (email/password login)
+    # P0-6: keeps a placeholder default so Settings() stays constructible in tests
+    # and local dev without every test file setting JWT_SECRET — the actual
+    # security enforcement (reject this placeholder / short secrets outside
+    # dev/test) happens in main.py's _validate_secrets(), gated on APP_ENV.
     jwt_secret: str = "change-me-opsmind-jwt-secret-dev-only"
     jwt_expire_hours: int = 72
     auth_invite_default_max_uses: int = 10
@@ -45,6 +49,11 @@ class Settings(BaseSettings):
     auth_password_reset_ttl_minutes: int = 60
     auth_password_reset_max_per_hour: int = 5
     app_public_url: str = "http://localhost:3000"
+
+    # P1-11: CORS allowed origins — comma-separated. Never "*" combined with
+    # allow_credentials=True (invalid per spec, and permits credentialed
+    # cross-origin requests from any page). Defaults to app_public_url.
+    cors_allowed_origins: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -63,6 +72,12 @@ class Settings(BaseSettings):
     # MT4 — CSV soft limits
     csv_max_upload_mb: int = 10
     csv_max_rows: int = 50000
+
+    # Public "Try Live Demo" login — issues a short-lived, restricted-role
+    # (investigator, never admin) session against the seeded demo tenant so
+    # visitors can try the product with real data without signing up.
+    enable_demo_login: bool = True
+    demo_login_jwt_expire_hours: int = 2
 
 
 @lru_cache

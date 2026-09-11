@@ -10,10 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
-from api.app.config import clear_settings_cache
+from api.app.config import clear_settings_cache, get_settings
 from api.app.main import create_app
+from opsmind.auth.jwt_tokens import create_access_token
+from opsmind.auth.passwords import hash_password
 from opsmind.db.memory_models import CaseSummary, Review
 from opsmind.db.seed import DEMO_TENANT_ID
+from opsmind.db.tenant_models import User
 from opsmind.db.tenant_session import apply_tenant_session
 from opsmind.db.session import get_owner_session_factory
 from opsmind.graph.runner import list_investigations_view, load_investigation_view, reset_graph_cache, run_investigation
@@ -185,18 +188,46 @@ def test_list_investigations_and_cases_api():
     assert resp.status_code == 200
     inv_id = resp.json()["id"]
 
+    # P1-8: review submission now requires a real user session — reviewer
+    # identity is derived from the authenticated user, not a client-supplied
+    # field. Build a demo-tenant user + JWT to submit the review as, matching
+    # what the real login flow provides.
+    settings = get_settings()
+    factory = get_owner_session_factory(SYNC_URL)
+    with factory() as session:
+        apply_tenant_session(session, DEMO_TENANT_ID)
+        email = f"reviewer-{uuid.uuid4().hex[:8]}@opsmind.test"
+        user = User(
+            id=uuid.uuid4(),
+            tenant_id=DEMO_TENANT_ID,
+            email=email,
+            password_hash=hash_password("test-password-123"),
+            role="admin",
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    token = create_access_token(
+        secret=settings.jwt_secret,
+        user_id=user.id,
+        tenant_id=DEMO_TENANT_ID,
+        email=user.email,
+        role=user.role,
+        expire_hours=1,
+    )
+
     # Submit review
     review_resp = client.post(
         f"/investigations/{inv_id}/reviews",
-        headers={"X-API-Key": API_KEY},
+        headers={"Authorization": f"Bearer {token}"},
         json={
             "decision": "approved",
-            "reviewer": "test_lead",
             "notes": "Verified root cause.",
         },
     )
     assert review_resp.status_code == 200
     assert review_resp.json()["case_promoted"] is True
+    assert review_resp.json()["review"]["reviewer"] == email
 
     # List investigations
     list_resp = client.get(

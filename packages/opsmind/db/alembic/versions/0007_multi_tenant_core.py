@@ -222,26 +222,9 @@ def upgrade() -> None:
             """
         ).bindparams(tid=str(DEMO_TENANT_ID))
     )
-    op.execute(
-        sa.text(
-            """
-            INSERT INTO api_keys (id, tenant_id, name, key_hash, key_prefix, scopes, created_by)
-            VALUES (
-                :id,
-                :tid,
-                'bootstrap',
-                :key_hash,
-                'change-m…',
-                '{}'::jsonb,
-                'migration'
-            )
-            """
-        ).bindparams(
-            id=str(DEMO_API_KEY_ID),
-            tid=str(DEMO_TENANT_ID),
-            key_hash=DEFAULT_KEY_HASH,
-        )
-    )
+    # P0-5: Do NOT insert a bootstrap API key here. API keys should only be created via
+    # explicit scripts (scripts/bootstrap_demo.py) or management endpoints. The default key
+    # "change-me-opsmind-dev-key" is no longer inserted and should not be accepted.
 
     for table in TENANT_TABLES:
         _add_tenant_id(table)

@@ -468,6 +468,11 @@ def run_seed() -> None:
         carriers = seed_carriers(session, tenant_id)
         seed_campaigns(session, tenant_id)
         seed_orders_and_ops(session, tenant_id, products, carriers)
+        # Rows above use explicit ids — advance the serial sequences past them so
+        # later CSV uploads (which rely on nextval) don't hit duplicate keys.
+        from opsmind.db.ingest_csv import sync_id_sequences
+
+        sync_id_sequences(session)
         session.commit()
 
     ensure_readonly_role(engine)

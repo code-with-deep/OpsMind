@@ -77,6 +77,25 @@ def _driver_signals_from_rows(findings: list[dict[str, Any]]) -> dict[str, bool]
     }
 
 
+def _sql_rows_have_data(findings: list[dict[str, Any]]) -> bool:
+    """True when any SQL row holds a non-zero number (dates and labels don't count)."""
+    for f in findings:
+        if f.get("kind") != "sql":
+            continue
+        for row in f.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            for value in row.values():
+                if value is None or isinstance(value, bool):
+                    continue
+                try:
+                    if float(value) != 0:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+    return False
+
+
 def score_critique(
     *,
     findings: list[dict[str, Any]],
@@ -98,6 +117,16 @@ def score_critique(
             decision="fail_soft",
             notes="Tool budget exhausted; stopping without further retries.",
             gaps=["budget_exceeded"],
+        )
+
+    # Every query ran cleanly but the requested dates hold no business data.
+    # Replanning would re-run the same queries against the same empty window, so
+    # stop now and tell the operator why instead of burning the retry budget.
+    if "sql" in kinds and "sql:" not in err_blob and not _sql_rows_have_data(findings):
+        return Critique(
+            decision="fail_soft",
+            notes="No business data exists for the requested dates, so there was nothing to analyze.",
+            gaps=["no_data_in_window"],
         )
 
     if not findings:

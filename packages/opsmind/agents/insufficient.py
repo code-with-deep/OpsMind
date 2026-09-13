@@ -19,11 +19,20 @@ def insufficient_evidence_node(state: InvestigationState) -> dict[str, Any]:
     gaps = list(critique.get("gaps") or [])
     budget_stop = "budget_exceeded" in gaps or state.get("status") == "budget_exceeded"
     terminal = "budget_exceeded" if budget_stop else "insufficient_evidence"
+    no_data = "no_data_in_window" in gaps
+    window = (state.get("plan") or {}).get("problem_window") or {}
+    window_text = (
+        f"{window.get('start')} to {window.get('end')}"
+        if window.get("start") and window.get("end")
+        else "the requested dates"
+    )
 
     assumptions = list(state.get("assumptions") or []) + [
         (
             "Assumptions labeled: tool budget exhausted before evidence was complete."
             if budget_stop
+            else f"Assumptions labeled: no business data was found for {window_text}."
+            if no_data
             else "Assumptions labeled: remaining gaps could not be closed within retry budget."
         ),
     ]
@@ -31,11 +40,22 @@ def insufficient_evidence_node(state: InvestigationState) -> dict[str, Any]:
         "summary": (
             "Stopped: per-run tool budget exhausted."
             if budget_stop
+            else f"No business data was found for {window_text}, so there is nothing to analyze yet."
+            if no_data
             else "Insufficient evidence to complete a grounded recommendation."
         ),
         "actions": [
-            "Provide a clearer time window and metric.",
-            "Ensure business data and playbooks are available for the suspected drivers.",
+            *(
+                [
+                    "Ask about a date range that your uploaded data covers (see Settings → Business data).",
+                    "If this period should have data, upload a CSV bundle that includes it.",
+                ]
+                if no_data
+                else [
+                    "Provide a clearer time window and metric.",
+                    "Ensure business data and playbooks are available for the suspected drivers.",
+                ]
+            ),
             *(
                 ["Increase MAX_TOOL_CALLS_PER_RUN if the investigation legitimately needs more tools."]
                 if budget_stop

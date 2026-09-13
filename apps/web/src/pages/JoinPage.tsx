@@ -3,8 +3,16 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle2, Clock, Loader2, XCircle } from "lucide-react";
 import { AuthLayout } from "../layouts/AuthLayout";
 import { Button } from "../components/common/Button";
-import { api, setAccessToken, setStoredUser } from "../lib/api";
+import { FormAlert, PasswordChecklist, TextField } from "../components/common/FormField";
+import { useFormFields } from "../hooks/useFormFields";
+import { api, ApiError, errorMessage } from "../lib/api";
 import { routes } from "../lib/routes";
+import {
+  validateConfirmPassword,
+  validateEmail,
+  validateInviteCode,
+  validateNewPassword,
+} from "../lib/validation";
 
 type JoinState =
   | { phase: "form" }
@@ -14,14 +22,27 @@ type JoinState =
   | { phase: "approved" }
   | { phase: "rejected"; reason: string | null };
 
-const POLL_INTERVAL_MS = 10_000;
+// This page is public (no session), so it can't use the authenticated live
+// stream — it checks the request status on a short interval instead.
+const POLL_INTERVAL_MS = 5_000;
 
 export function JoinPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [inviteCode, setInviteCode] = useState(params.get("code") || "");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const form = useFormFields(
+    {
+      invite_code: (params.get("code") || "").toUpperCase(),
+      email: "",
+      password: "",
+      confirm_password: "",
+    },
+    (v) => ({
+      invite_code: validateInviteCode(v.invite_code),
+      email: validateEmail(v.email),
+      password: validateNewPassword(v.password),
+      confirm_password: validateConfirmPassword(v.password, v.confirm_password),
+    })
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<JoinState>({ phase: "form" });
@@ -44,16 +65,12 @@ export function JoinPage() {
           // Auto-login with the credentials the user already provided
           setState({ phase: "signing_in" });
           try {
-            const authRes = await api.login({ email: pendingEmail, password: pendingPassword });
-            // Persist JWT + user profile exactly as LoginPage does
-            setAccessToken(authRes.access_token);
-            setStoredUser(authRes.user);
+            await api.login({ email: pendingEmail, password: pendingPassword });
             setState({ phase: "approved" });
-            // Brief success flash then go straight to console
             setTimeout(() => navigate(routes.console, { replace: true }), 1200);
           } catch {
-            // Auto-login failed (edge case: password changed or network blip)
-            // Fall back to login page with a clear success notice
+            // Auto-login failed (password changed or network blip) — fall back
+            // to the login page with a clear success notice.
             setState({ phase: "approved" });
             setTimeout(() => navigate(routes.login + "?notice=access_approved", { replace: true }), 1200);
           }
@@ -62,11 +79,10 @@ export function JoinPage() {
           setState({ phase: "rejected", reason: res.rejection_reason ?? null });
         }
       } catch {
-        // Silently swallow transient polling errors — UI stays in pending
+        // Transient polling errors — stay pending and retry on the next tick.
       }
     };
 
-    // Poll immediately, then on interval
     void poll();
     pollRef.current = setInterval(() => void poll(), POLL_INTERVAL_MS);
 
@@ -77,28 +93,27 @@ export function JoinPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+    if (!form.validateForSubmit()) return;
+    setLoading(true);
+    const { invite_code, email, password } = form.values;
     try {
-      const res = await api.joinInvite({
-        invite_code: inviteCode,
-        email,
+      const res = await api.joinInvite({ invite_code: invite_code.trim(), email: email.trim(), password });
+      setState({
+        phase: "pending",
+        email: email.trim(),
         password,
+        invite_code: invite_code.trim(),
+        request_id: res.request_id,
       });
-      // Store password in pending state so we can auto-login after approval
-      setState({ phase: "pending", email, password, invite_code: inviteCode, request_id: res.request_id });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      const s = msg.toLowerCase();
-      setError(
-        s.includes("invite") && (s.includes("invalid") || s.includes("not found") || s.includes("expired") || s.includes("revoked"))
-          ? "This invite code is invalid or has expired. Ask your admin for a new one."
-          : s.includes("invite") && s.includes("used")
-          ? "This invite code has reached its usage limit. Ask your admin for a new code."
-          : s.includes("email") && s.includes("already")
-          ? "This email is already registered in a workspace. Try signing in instead."
-          : msg || "Could not submit your access request. Please check the invite code and try again."
-      );
+      if (err instanceof ApiError && err.status === 409) {
+        form.applyServerErrors({ email: err.message });
+      } else if (err instanceof ApiError && err.status === 400 && /invite/i.test(err.message)) {
+        form.applyServerErrors({ invite_code: err.message });
+      } else if (!(err instanceof ApiError && form.applyServerErrors(err.fieldErrors))) {
+        setError(errorMessage(err, "Could not submit your access request. Please try again."));
+      }
     } finally {
       setLoading(false);
     }
@@ -106,17 +121,14 @@ export function JoinPage() {
 
   if (state.phase === "signing_in" || state.phase === "approved") {
     return (
-      <AuthLayout
-        title="Access approved!"
-        subtitle="Signing you in to your workspace…"
-      >
+      <AuthLayout title="Access approved!" subtitle="Signing you in to your workspace…">
         <div className="flex flex-col items-center gap-4 py-6 text-center">
           {state.phase === "signing_in" ? (
             <Loader2 className="w-12 h-12 text-accent-400 animate-spin" />
           ) : (
             <CheckCircle2 className="w-12 h-12 text-accent-400" />
           )}
-          <p className="text-sm text-surface-300">
+          <p className="text-sm text-surface-300" role="status">
             {state.phase === "signing_in" ? "Completing sign-in…" : "Redirecting to console…"}
           </p>
         </div>
@@ -142,11 +154,7 @@ export function JoinPage() {
           <p className="text-xs text-surface-500">
             You can try again with a new invite code, or contact your workspace admin.
           </p>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setState({ phase: "form" })}
-          >
+          <Button variant="secondary" size="sm" onClick={() => setState({ phase: "form" })}>
             Try again
           </Button>
         </div>
@@ -160,18 +168,18 @@ export function JoinPage() {
         title="Request submitted"
         subtitle="An admin will review your access request shortly."
       >
-        <div className="flex flex-col items-center gap-4 py-6 text-center">
+        <div className="flex flex-col items-center gap-4 py-6 text-center" role="status">
           <Clock className="w-12 h-12 text-accent-400 animate-pulse" />
           <div className="space-y-1">
             <p className="text-sm text-surface-100 font-medium">Waiting for admin approval</p>
             <p className="text-xs text-surface-400">
-              This page checks automatically every 10 seconds.
+              Keep this page open — you'll be signed in automatically once approved.
             </p>
             <p className="text-xs text-surface-500 mt-2">
               Submitted as <span className="text-surface-300 font-mono">{state.email}</span>
             </p>
           </div>
-          <div className="flex gap-2 pt-2">
+          <div className="flex gap-2 pt-2" aria-hidden="true">
             <div className="w-2 h-2 rounded-full bg-accent-400 animate-bounce" style={{ animationDelay: "0ms" }} />
             <div className="w-2 h-2 rounded-full bg-accent-400 animate-bounce" style={{ animationDelay: "150ms" }} />
             <div className="w-2 h-2 rounded-full bg-accent-400 animate-bounce" style={{ animationDelay: "300ms" }} />
@@ -181,7 +189,6 @@ export function JoinPage() {
     );
   }
 
-  // Default: form phase
   return (
     <AuthLayout
       title="Join with invite"
@@ -192,50 +199,48 @@ export function JoinPage() {
           <Link to={routes.signup} className="text-accent-400 hover:text-accent-300">
             Sign up
           </Link>
+          {" · "}
+          <Link to={routes.login} className="text-accent-400 hover:text-accent-300">
+            Sign in
+          </Link>
         </p>
       }
     >
-      <form className="space-y-3.5" onSubmit={(e) => void onSubmit(e)}>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Invite code</span>
-          <input
-            type="text"
-            required
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-            placeholder="OM-XXXX-XXXX"
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 font-mono text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Email</span>
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Password (min 8)</span>
-          <input
+      <form className="space-y-3.5" onSubmit={(e) => void onSubmit(e)} noValidate>
+        <TextField
+          label="Invite code"
+          placeholder="OM-XXXX-XXXX"
+          autoComplete="off"
+          spellCheck={false}
+          className="font-mono uppercase"
+          hint="Paste the code exactly as your admin shared it."
+          {...form.bind("invite_code")}
+          onChange={(value) => form.setValue("invite_code", value.toUpperCase())}
+        />
+        <TextField
+          label="Email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          placeholder="name@company.com"
+          {...form.bind("email")}
+        />
+        <div className="space-y-2.5">
+          <TextField
+            label="Password"
             type="password"
-            required
-            minLength={8}
             autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
+            {...form.bind("password")}
           />
-        </label>
-        {error ? (
-          <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2.5">
-            <span className="shrink-0 mt-0.5">⚠</span>
-            <span>{error}</span>
-          </div>
-        ) : null}
+          <PasswordChecklist password={form.values.password} />
+        </div>
+        <TextField
+          label="Confirm password"
+          type="password"
+          autoComplete="new-password"
+          {...form.bind("confirm_password")}
+        />
+        {error ? <FormAlert>{error}</FormAlert> : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
           Request access
         </Button>

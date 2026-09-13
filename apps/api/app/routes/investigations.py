@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -28,8 +31,11 @@ from opsmind.graph.runner import (
     reset_graph_cache,
     run_investigation,
 )
+from opsmind.guardrails.input import check_input_guardrails
 from opsmind.guardrails.output import sanitize_output_payload
-from opsmind.memory.persist import list_case_summaries, record_review
+from opsmind.memory.persist import create_investigation, list_case_summaries, record_review
+
+logger = logging.getLogger("opsmind.api.investigations")
 
 router = APIRouter(
     prefix="/investigations",
@@ -39,11 +45,65 @@ router = APIRouter(
 
 
 class CreateInvestigationBody(BaseModel):
-    question: str = Field(min_length=3)
+    question: str = Field(min_length=3, max_length=2000)
     wait: bool = Field(
         default=True,
-        description="If true, run the graph to completion before responding.",
+        description=(
+            "If true, run the graph to completion before responding. If false, start "
+            "the run in the background and return 202 immediately; progress arrives "
+            "on GET /events/stream."
+        ),
     )
+
+
+_executor: ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(
+            max_workers=max(1, int(os.getenv("INVESTIGATION_WORKERS", "4"))),
+            thread_name_prefix="investigation",
+        )
+    return _executor
+
+
+def _run_in_background(
+    question: str,
+    settings: Any,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    investigation_id: uuid.UUID,
+) -> None:
+    try:
+        run_investigation(
+            question=question,
+            settings=settings,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            investigation_id=investigation_id,
+        )
+    except Exception:  # noqa: BLE001
+        # run_investigation has already marked the row failed and written graph_failed.
+        logger.exception("background investigation failed investigation_id=%s", investigation_id)
+
+
+def _start_background_investigation(
+    question: str, *, settings: Any, tenant: TenantContext
+) -> dict[str, Any]:
+    factory = get_owner_session_factory(settings.database_url_sync)
+    with factory() as session:
+        apply_tenant_session(session, tenant.tenant_id)
+        inv = create_investigation(
+            session, tenant_id=tenant.tenant_id, question=question, status="running"
+        )
+        session.commit()
+        view = load_investigation_view(session, inv.id, tenant_id=tenant.tenant_id)
+    _get_executor().submit(
+        _run_in_background, question, settings, tenant.tenant_id, tenant.user_id, inv.id
+    )
+    return view
 
 
 class SubmitReviewBody(BaseModel):
@@ -100,15 +160,11 @@ def get_case_memory(
 @router.post("")
 def create_and_run_investigation(
     body: CreateInvestigationBody,
+    response: Response,
     tenant: TenantContext = Depends(require_tenant_context),
     session: Session = Depends(get_tenant_session),
 ) -> dict[str, Any]:
     settings = get_settings()
-    if not body.wait:
-        raise HTTPException(
-            status_code=400,
-            detail="Async enqueue is not enabled; set wait=true.",
-        )
 
     # Require BOTH business data (CSV) and at least one SOP playbook before
     # running an investigation — a report grounded only in SQL with no
@@ -171,6 +227,14 @@ def create_and_run_investigation(
                 "limit": max_per_day,
             },
         )
+
+    # Background mode returns as soon as the run is queued, so the console can
+    # show the agents progressing live instead of holding an HTTP request (and
+    # a server thread) for the whole run. Guardrail rejections still take the
+    # synchronous path below so callers get the same immediate 400.
+    if not body.wait and check_input_guardrails(body.question).allowed:
+        response.status_code = 202
+        return _start_background_investigation(body.question, settings=settings, tenant=tenant)
 
     try:
         result = run_investigation(
@@ -273,5 +337,9 @@ def submit_investigation_review(
 
 
 def dispose_investigation_runtime() -> None:
+    global _executor
+    if _executor is not None:
+        _executor.shutdown(wait=False, cancel_futures=True)
+        _executor = None
     reset_graph_cache()
     dispose_owner_engine()

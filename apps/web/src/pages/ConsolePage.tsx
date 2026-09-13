@@ -9,7 +9,8 @@ import { Badge } from "../components/common/Badge";
 import { Button } from "../components/common/Button";
 import { SubViewTabs } from "../components/common/AppUI";
 import { getStatusBadgeConfig } from "../lib/utils";
-import { Clock, Layers, PlusCircle, RotateCw, Sparkles } from "lucide-react";
+import { AlertTriangle, Clock, Layers, PlusCircle, RotateCw, Sparkles } from "lucide-react";
+import { useRealtimeState } from "../hooks/useRealtime";
 
 export function ConsolePage() {
   const {
@@ -24,7 +25,10 @@ export function ConsolePage() {
     setSelectedSourceId,
     openNewInvestigationModal,
     openAuditDrawer,
+    handleLaunchInvestigation,
+    launching,
   } = useOutletContext<AppShellOutletContext>();
+  const liveState = useRealtimeState();
 
   if (loading) {
     return (
@@ -33,10 +37,9 @@ export function ConsolePage() {
           <div className="w-12 h-12 rounded-2xl bg-accent-950 border border-accent-800 flex items-center justify-center mx-auto text-accent-400 shadow-glow-accent">
             <RotateCw className="w-6 h-6 animate-spin" />
           </div>
-          <h3 className="font-app-heading text-lg text-white">Running Investigation</h3>
+          <h3 className="font-app-heading text-lg text-white">Loading investigation</h3>
           <p className="text-sm text-surface-400 max-w-md mx-auto leading-relaxed">
-            Agents are gathering SQL evidence, retrieving playbooks, and synthesizing a
-            grounded report. This usually takes a few seconds.
+            Fetching the report, evidence, and timeline…
           </p>
         </div>
       </div>
@@ -68,6 +71,14 @@ export function ConsolePage() {
 
   const findingCount = currentInvestigation.findings?.length || 0;
   const timelineCount = currentInvestigation.timeline?.length || 0;
+  const isRunning = currentInvestigation.status === "running";
+  const stopEvent = [...(currentInvestigation.timeline || [])]
+    .reverse()
+    .find((e) => e.event_type === "graph_interrupted" || e.event_type === "graph_failed");
+  const failureMessage =
+    stopEvent?.event_type === "graph_interrupted" && typeof stopEvent.payload?.error === "string"
+      ? stopEvent.payload.error
+      : "The investigation stopped because of an unexpected error. Running it again usually works.";
 
   return (
     <div className="space-y-5 sm:space-y-6 animate-fadeIn">
@@ -85,6 +96,8 @@ export function ConsolePage() {
                 ? "error"
                 : currentInvestigation.status === "needs_clarification"
                 ? "warning"
+                : isRunning
+                ? "info"
                 : "default"
             }
             size="xs"
@@ -109,6 +122,41 @@ export function ConsolePage() {
         </div>
       </div>
 
+      {isRunning ? (
+        <div role="status" className="app-card p-4 flex items-start gap-3 border-accent-800/50">
+          <RotateCw className="w-4 h-4 text-accent-400 animate-spin shrink-0 mt-0.5" />
+          <div className="space-y-0.5 min-w-0">
+            <p className="text-sm font-medium text-white">Agents are investigating</p>
+            <p className="text-xs text-surface-400 leading-relaxed">
+              {liveState === "live"
+                ? "This page updates live as each agent finishes — no need to refresh."
+                : "Reconnecting to live updates… progress is still checked every few seconds."}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {currentInvestigation.status === "failed" ? (
+        <div role="alert" className="rounded-xl bg-rose-950/50 border border-rose-800/70 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-start gap-2.5 flex-1 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium text-rose-50">Investigation didn't finish</p>
+              <p className="text-xs text-rose-200/90 leading-relaxed">{failureMessage}</p>
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={launching}
+            onClick={() => void handleLaunchInvestigation(currentInvestigation.question)}
+            className="shrink-0"
+          >
+            Run again
+          </Button>
+        </div>
+      ) : null}
+
       <LiveDAGView investigation={currentInvestigation} />
 
       <SubViewTabs
@@ -121,7 +169,18 @@ export function ConsolePage() {
         ]}
       />
 
-      {activeSubView === "report" && (
+      {activeSubView === "report" && isRunning && (
+        <div className="app-card p-8 text-center space-y-2">
+          <Sparkles className="w-8 h-8 mx-auto text-accent-400 animate-pulse" />
+          <p className="text-sm text-white font-medium">The report is on its way</p>
+          <p className="text-xs text-surface-400 max-w-md mx-auto leading-relaxed">
+            It appears here automatically once the Critic has verified the evidence. Meanwhile you
+            can watch findings arrive in the Evidence and Timeline tabs.
+          </p>
+        </div>
+      )}
+
+      {activeSubView === "report" && !isRunning && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6 items-start">
           <div className="md:col-span-2">
             <ReportView

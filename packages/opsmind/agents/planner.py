@@ -5,14 +5,17 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from sqlalchemy import func, select
+
 from opsmind.agents.llm import LLMError, chat_json, llm_configured
 from opsmind.agents.schemas import InvestigationPlan, RagStep, SqlStep
 from opsmind.agents.triage import SUPPORTED_DOMAINS, classify_question
+from opsmind.db.models import DailyMetric
 from opsmind.db.session import get_owner_session_factory
 from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
 from opsmind.graph.events import update_investigation, write_event
@@ -32,16 +35,24 @@ _MONEY_CLAIM_RE = re.compile(
 )
 
 
-def _windows_for_question(question: str) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
-    """P1-3 fix: Use relative dates (last_week) by default, not hardcoded demo window."""
+def _windows_for_question(
+    question: str, *, data_end: date | None = None
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+    """Windows from the question's dates; otherwise last calendar week (P1-3).
+
+    When the tenant's data ends before last calendar week (e.g. a historical CSV
+    upload), questions without dates anchor on the latest week that has data —
+    otherwise every query would hit an empty window.
+    """
     parsed = extract_compare_windows_from_question(question)
     if parsed:
         problem, prior = parsed
     else:
-        # P1-3: Use relative dates for real tenants. Only use problem_week if explicitly requested
-        # (which would only happen in test/demo contexts).
         problem = normalize_date_range("last_week")
-        prior = normalize_date_range("last_week")
+        if data_end is not None and data_end < problem.end:
+            problem = DateRange(
+                data_end - timedelta(days=6), data_end, "latest_data_week", "latest week with data"
+            )
         # Adjust prior to be the week before problem week
         prior_end = problem.start - timedelta(days=1)
         span = (problem.end - problem.start).days
@@ -82,8 +93,10 @@ def _dedupe_sql_steps(steps: list[SqlStep]) -> list[SqlStep]:
     return out
 
 
-def _heuristic_plan(question: str, *, gaps: list[str] | None = None) -> InvestigationPlan:
-    p, prior_p, problem_window, prior_window = _windows_for_question(question)
+def _heuristic_plan(
+    question: str, *, gaps: list[str] | None = None, data_end: date | None = None
+) -> InvestigationPlan:
+    p, prior_p, problem_window, prior_window = _windows_for_question(question, data_end=data_end)
     gaps = gaps or []
     skus = extract_skus_from_text(question)
 
@@ -207,9 +220,11 @@ def _heuristic_plan(question: str, *, gaps: list[str] | None = None) -> Investig
     )
 
 
-def _sanitize_llm_plan(raw: InvestigationPlan, question: str) -> InvestigationPlan:
+def _sanitize_llm_plan(
+    raw: InvestigationPlan, question: str, *, data_end: date | None = None
+) -> InvestigationPlan:
     """Force question dates, allowlisted templates, and no pre-tool money claims."""
-    p, prior_p, problem_window, prior_window = _windows_for_question(question)
+    p, prior_p, problem_window, prior_window = _windows_for_question(question, data_end=data_end)
     skus = set(extract_skus_from_text(question))
 
     sql_steps: list[SqlStep] = []
@@ -284,10 +299,14 @@ def _sanitize_llm_plan(raw: InvestigationPlan, question: str) -> InvestigationPl
 
 
 def _llm_plan(
-    question: str, runtime: dict[str, Any], *, gaps: list[str] | None = None
+    question: str,
+    runtime: dict[str, Any],
+    *,
+    gaps: list[str] | None = None,
+    data_end: date | None = None,
 ) -> InvestigationPlan:
     gap_text = ", ".join(gaps or []) or "none"
-    p, prior_p, problem_window, prior_window = _windows_for_question(question)
+    p, prior_p, problem_window, prior_window = _windows_for_question(question, data_end=data_end)
     system = (
         "You are the OpsMind Planner for ecommerce/warehouse investigations. "
         "Return JSON only matching keys: summary, problem_window{start,end}, "
@@ -318,7 +337,21 @@ def _llm_plan(
         user=user,
     )
     plan = InvestigationPlan.model_validate(raw)
-    return _sanitize_llm_plan(plan, question)
+    return _sanitize_llm_plan(plan, question, data_end=data_end)
+
+
+def _latest_data_date(runtime: dict[str, Any], tenant_id: uuid.UUID) -> date | None:
+    """Most recent day of business data for the tenant (anchors questions without dates)."""
+    try:
+        factory = get_owner_session_factory(runtime["database_url_sync"])
+        with factory() as session:
+            apply_tenant_session(session, tenant_id)
+            return session.scalar(
+                select(func.max(DailyMetric.metric_date)).where(DailyMetric.tenant_id == tenant_id)
+            )
+    except Exception:  # noqa: BLE001 — enrichment only; fall back to calendar weeks
+        logger.warning("planner_latest_data_date_failed tenant_id=%s", tenant_id, exc_info=True)
+        return None
 
 
 def planner_node(state: InvestigationState) -> dict[str, Any]:
@@ -332,7 +365,8 @@ def planner_node(state: InvestigationState) -> dict[str, Any]:
 
     route, reason = classify_question(question)
     assumptions = [
-        "Date windows come from the question when present; otherwise seed problem/prior week aliases.",
+        "Date windows come from the question when present; otherwise the most recent week "
+        "covered by your data.",
         "Totals and drivers must come from SQL/RAG tools — planner does not invent numbers.",
     ]
 
@@ -388,17 +422,22 @@ def planner_node(state: InvestigationState) -> dict[str, Any]:
     # P1-6: catch LLMError specifically (not a redundant `except (LLMError, Exception)`,
     # which is just `except Exception`), log the degradation, and actually surface it —
     # the previous code set `err = None` on this path even when the LLM call failed.
+    data_end = (
+        None
+        if extract_compare_windows_from_question(question)
+        else _latest_data_date(runtime, tenant_id)
+    )
     err: str | None = None
     if llm_configured(runtime.get("llm_api_key")):
         try:
-            plan = _llm_plan(question, runtime, gaps=gaps if is_retry else None)
+            plan = _llm_plan(question, runtime, gaps=gaps if is_retry else None, data_end=data_end)
         except LLMError as exc:
             err = str(exc)
             logger.warning(
                 "planner_llm_fallback investigation_id=%s model=%s error=%s",
                 inv_id, runtime.get("llm_model_fast"), exc,
             )
-            plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
+            plan = _heuristic_plan(question, gaps=gaps if is_retry else None, data_end=data_end)
             plan = plan.model_copy(update={"degraded": True})
         except Exception as exc:  # noqa: BLE001 — schema validation / unexpected shape
             err = str(exc)
@@ -406,10 +445,10 @@ def planner_node(state: InvestigationState) -> dict[str, Any]:
                 "planner_llm_fallback investigation_id=%s model=%s error=%s",
                 inv_id, runtime.get("llm_model_fast"), exc,
             )
-            plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
+            plan = _heuristic_plan(question, gaps=gaps if is_retry else None, data_end=data_end)
             plan = plan.model_copy(update={"degraded": True})
     else:
-        plan = _heuristic_plan(question, gaps=gaps if is_retry else None)
+        plan = _heuristic_plan(question, gaps=gaps if is_retry else None, data_end=data_end)
         plan = plan.model_copy(update={"degraded": True})
 
     factory = get_owner_session_factory(runtime["database_url_sync"])

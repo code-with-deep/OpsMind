@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 # P2-16: arbitrary fixed key for a Postgres advisory lock guarding migrations —
 # prevents multiple replicas starting simultaneously from racing `alembic upgrade`.
@@ -26,7 +27,8 @@ def _run_migrations() -> None:
     from alembic import command
     from alembic.config import Config
 
-    alembic_cfg = Config("/app/alembic.ini")
+    # Repo root (/app in the container) — also works when run outside Docker.
+    alembic_cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
 
     # Resolve sync DB URL (Alembic needs a non-async driver)
     db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get(
@@ -105,7 +107,8 @@ def main() -> None:
     import uvicorn
 
     reload = os.environ.get("UVICORN_RELOAD", "").lower() in ("1", "true", "yes")
-    run_kwargs: dict = {"host": host, "port": port}
+    # Long-lived /events/stream connections would otherwise block shutdown/reload.
+    run_kwargs: dict = {"host": host, "port": port, "timeout_graceful_shutdown": 5}
     if reload:
         run_kwargs["reload"] = True
         run_kwargs["reload_dirs"] = ["/app/apps", "/app/packages"]

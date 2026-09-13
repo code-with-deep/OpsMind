@@ -99,6 +99,9 @@ const PRELOADED_SCENARIOS: Scenario[] = [
   },
 ];
 
+const MIN_QUESTION_LENGTH = 3;
+const MAX_QUESTION_LENGTH = 2000;
+
 interface NewInvestigationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -117,7 +120,7 @@ export function NewInvestigationModal({
 
   const handleSubmitCustom = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customQuestion.trim()) return;
+    if (customQuestion.trim().length < MIN_QUESTION_LENGTH) return;
     onSubmit(customQuestion.trim());
   };
 
@@ -161,18 +164,28 @@ export function NewInvestigationModal({
           <textarea
             rows={3}
             required
+            maxLength={MAX_QUESTION_LENGTH}
+            aria-describedby="question-hint"
             value={customQuestion}
             onChange={(e) => setCustomQuestion(e.target.value)}
             placeholder="e.g. Why did revenue drop in the problem week 2026-08-17 to 2026-08-23 compared to prior week?"
             className="w-full p-3.5 bg-surface-950 border border-surface-800 rounded-xl text-sm text-surface-100 placeholder:text-surface-500 focus:outline-none focus:border-accent-600 focus:ring-1 focus:ring-accent-600/50 resize-none"
           />
-          <div className="flex justify-end">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-2">
+            <p id="question-hint" className="text-xs text-surface-500">
+              {customQuestion.trim().length > 0 && customQuestion.trim().length < MIN_QUESTION_LENGTH
+                ? "Please describe the problem in a few more words."
+                : "Include a date range for sharper results."}{" "}
+              <span className="tabular-nums">
+                {customQuestion.length}/{MAX_QUESTION_LENGTH}
+              </span>
+            </p>
             <Button
               type="submit"
               variant="accent"
               size="sm"
               loading={loading}
-              disabled={!customQuestion.trim()}
+              disabled={customQuestion.trim().length < MIN_QUESTION_LENGTH}
               icon={<ArrowRight className="w-4 h-4" />}
               iconPosition="right"
               className="w-full sm:w-auto"

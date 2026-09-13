@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AuthLayout } from "../layouts/AuthLayout";
 import { Button } from "../components/common/Button";
-import { api, getAccessToken } from "../lib/api";
+import { FormAlert, PasswordChecklist, TextField } from "../components/common/FormField";
+import { useFormFields } from "../hooks/useFormFields";
+import { api, ApiError, errorMessage, getAccessToken } from "../lib/api";
 import { routes } from "../lib/routes";
+import {
+  validateCompanyName,
+  validateConfirmPassword,
+  validateEmail,
+  validateNewPassword,
+} from "../lib/validation";
 
 type AuthNavState = {
   from?: string;
@@ -14,9 +22,15 @@ export function SignupPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const navState = (location.state as AuthNavState | null) || null;
-  const [companyName, setCompanyName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const form = useFormFields(
+    { company_name: "", email: "", password: "", confirm_password: "" },
+    (v) => ({
+      company_name: validateCompanyName(v.company_name),
+      email: validateEmail(v.email),
+      password: validateNewPassword(v.password),
+      confirm_password: validateConfirmPassword(v.password, v.confirm_password),
+    })
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -31,13 +45,14 @@ export function SignupPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+    if (!form.validateForSubmit()) return;
+    setLoading(true);
     try {
       await api.signup({
-        company_name: companyName,
-        email,
-        password,
+        company_name: form.values.company_name.trim(),
+        email: form.values.email.trim(),
+        password: form.values.password,
       });
       const next = navState?.from || routes.console;
       navigate(next, {
@@ -45,17 +60,11 @@ export function SignupPage() {
         state: navState?.launchState || undefined,
       });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      const s = msg.toLowerCase();
-      setError(
-        s.includes("email") && s.includes("already")
-          ? "This email is already registered. Try signing in instead."
-          : s.includes("company") && (s.includes("taken") || s.includes("exists"))
-          ? "That company name is already taken. Please choose a different name."
-          : s.includes("password") && s.includes("short")
-          ? "Password must be at least 8 characters long."
-          : msg || "Could not create your workspace. Please try again."
-      );
+      if (err instanceof ApiError && err.status === 409) {
+        form.applyServerErrors({ email: err.message });
+      } else if (!(err instanceof ApiError && form.applyServerErrors(err.fieldErrors))) {
+        setError(errorMessage(err, "Could not create your workspace. Please try again."));
+      }
     } finally {
       setLoading(false);
     }
@@ -82,47 +91,39 @@ export function SignupPage() {
         </p>
       }
     >
-      <form className="space-y-3.5" onSubmit={onSubmit}>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Company name</span>
-          <input
-            type="text"
-            required
-            minLength={2}
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Work email</span>
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Password (min 8)</span>
-          <input
+      <form className="space-y-3.5" onSubmit={onSubmit} noValidate>
+        <TextField
+          label="Company name"
+          autoComplete="organization"
+          placeholder="Acme Retail"
+          autoFocus
+          maxLength={120}
+          {...form.bind("company_name")}
+        />
+        <TextField
+          label="Work email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          placeholder="name@company.com"
+          {...form.bind("email")}
+        />
+        <div className="space-y-2.5">
+          <TextField
+            label="Password"
             type="password"
-            required
-            minLength={8}
             autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
+            {...form.bind("password")}
           />
-        </label>
-        {error ? (
-          <div className="flex items-start gap-2 text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2.5">
-            <span className="shrink-0 mt-0.5">⚠</span>
-            <span>{error}</span>
-          </div>
-        ) : null}
+          <PasswordChecklist password={form.values.password} />
+        </div>
+        <TextField
+          label="Confirm password"
+          type="password"
+          autoComplete="new-password"
+          {...form.bind("confirm_password")}
+        />
+        {error ? <FormAlert>{error}</FormAlert> : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
           Create workspace
         </Button>

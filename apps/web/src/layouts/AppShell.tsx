@@ -1,21 +1,25 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   InvestigationDetail,
   InvestigationSummaryItem,
   ReviewDecision,
 } from "../types";
-import { api } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { AuditDrawer } from "../components/investigation/AuditDrawer";
 import { NewInvestigationModal } from "../components/investigation/NewInvestigationModal";
+import { useLiveRefresh, useRealtimeState } from "../hooks/useRealtime";
 import { parseConsoleSubView, routes } from "../lib/routes";
 import { AlertTriangle, ArrowRight } from "lucide-react";
 
 export interface AppShellOutletContext {
   investigations: InvestigationSummaryItem[];
   currentInvestigation: InvestigationDetail | null;
+  /** Loading a different investigation's details (not a background refresh). */
   loading: boolean;
+  /** A new investigation is being started. */
+  launching: boolean;
   submittingReview: boolean;
   activeSubView: ReturnType<typeof parseConsoleSubView>;
   selectedSourceId: string | null;
@@ -49,8 +53,23 @@ function toAppNotice(raw: string): AppNotice {
   const lower = text.toLowerCase();
 
   // ── Data readiness ────────────────────────────────────────────────────────
+  if (lower.includes("both company csv")) {
+    return {
+      title: "Business data and playbooks required",
+      body: "Upload your company data ZIP (products.csv, orders.csv, order_items.csv) and at least one SOP playbook in Settings before running investigations.",
+      actionTo: routes.settings,
+      actionLabel: "Go to Settings",
+    };
+  }
+  if (lower.includes("sop playbook")) {
+    return {
+      title: "Playbook required",
+      body: "Upload at least one SOP playbook (Markdown or a .zip of them) in Settings before running investigations.",
+      actionTo: routes.settings,
+      actionLabel: "Go to Settings",
+    };
+  }
   if (
-    lower.includes("tenant_data_not_ready") ||
     lower.includes("upload company csv") ||
     lower.includes("no business data") ||
     (lower.includes("products.csv") && lower.includes("orders.csv"))
@@ -64,42 +83,19 @@ function toAppNotice(raw: string): AppNotice {
   }
 
   // ── Guardrails ────────────────────────────────────────────────────────────
-  if (
-    lower.includes("guardrail") ||
-    lower.includes("jailbreak") ||
-    lower.includes("injection") ||
-    lower.includes("flagged as potentially")
-  ) {
+  if (lower.includes("guardrail") || lower.includes("jailbreak") || lower.includes("injection")) {
     return {
       title: "Question flagged",
-      body: "Your question was flagged as potentially unsafe. Please rephrase it — avoid instructions, code, or requests that aren't operations questions.",
+      body: "Your question was flagged as potentially unsafe. Please rephrase it as an operations question — avoid instructions, code, or requests for credentials.",
     };
   }
 
-  // ── Investigation pipeline failures ───────────────────────────────────────
-  if (lower.includes("investigation_in_progress") || lower.includes("already in progress")) {
-    return {
-      title: "Investigation already running",
-      body: "An investigation is already in progress for your workspace. Wait for it to finish before starting another.",
-    };
-  }
-
-  if (lower.includes("fail_soft") || lower.includes("could not reach a confident") || lower.includes("ran out of retries")) {
-    return {
-      title: "Investigation incomplete",
-      body: "The agents couldn't reach a confident answer. Try rephrasing your question or uploading more business data and playbooks.",
-    };
-  }
-
-  if (lower.includes("needs_clarification") || lower.includes("more context")) {
-    return {
-      title: "Question needs more detail",
-      body: "The question was too broad or ambiguous. Add specifics like a date range, product category, or region.",
-    };
+  if (lower.includes("daily limit")) {
+    return { title: "Daily limit reached", body: text };
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  if (lower.includes("session has expired") || lower.includes("unauthorized") || lower.includes("sign in again")) {
+  if (lower.includes("session has expired") || lower.includes("sign in again")) {
     return {
       title: "Session expired",
       body: "Your session has expired. Please sign in again to continue.",
@@ -108,41 +104,19 @@ function toAppNotice(raw: string): AppNotice {
     };
   }
 
-  if (lower.includes("don't have permission") || lower.includes("forbidden")) {
-    return {
-      title: "Access denied",
-      body: "You don't have permission to perform this action. Contact your workspace admin.",
-      actionTo: routes.settings,
-      actionLabel: "Go to Settings",
-    };
+  if (lower.includes("permission") || lower.includes("only workspace admins")) {
+    return { title: "Access denied", body: text };
   }
 
   // ── Network / server ──────────────────────────────────────────────────────
-  if (lower.includes("could not reach the server") || lower.includes("network") || lower.includes("econnrefused")) {
-    return {
-      title: "Connection problem",
-      body: "Could not reach the server. Check your network connection and try again.",
-    };
-  }
-
-  if (lower.includes("timed out") || lower.includes("timeout")) {
-    return {
-      title: "Request timed out",
-      body: "The investigation took too long to respond. Please try again.",
-    };
-  }
-
-  if (lower.includes("server encountered an unexpected") || lower.includes("500")) {
-    return {
-      title: "Server error",
-      body: "The server encountered an unexpected error. Please try again in a moment.",
-    };
+  if (lower.includes("can't reach the opsmind server")) {
+    return { title: "Connection problem", body: text };
   }
 
   // ── Generic fallback ──────────────────────────────────────────────────────
   return {
     title: "Something went wrong",
-    body: text || "An unexpected error occurred. Try again or contact support.",
+    body: text || "An unexpected error occurred. Please try again.",
   };
 }
 
@@ -158,57 +132,89 @@ export function AppShell() {
   const [currentInvestigation, setCurrentInvestigation] =
     useState<InvestigationDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [launching, setLaunching] = useState(false);
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [isAuditDrawerOpen, setIsAuditDrawerOpen] = useState(false);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const notice = globalError ? toAppNotice(globalError) : null;
+  const liveState = useRealtimeState();
+
+  // The investigation the route currently asks for; responses for any other id
+  // (e.g. a slow fetch after the user clicked elsewhere) are discarded.
+  const requestedIdRef = useRef<string | null>(investigationId ?? null);
+  const currentRef = useRef(currentInvestigation);
+  currentRef.current = currentInvestigation;
 
   const activeSubView = parseConsoleSubView(subView);
   const approvedCount = investigations.filter((i) => i.is_approved).length;
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     try {
       const res = await api.listInvestigations();
       setInvestigations(res.investigations || []);
-      return res.investigations || [];
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "History load failed";
-      console.warn("History load error:", message);
-      return [];
+      console.warn("History load error:", errorMessage(err, "History load failed"));
     }
-  };
+  }, []);
 
   const loadDetail = async (id: string) => {
-    setLoading(true);
+    requestedIdRef.current = id;
+    // Re-fetching the investigation already on screen shouldn't flash the loader.
+    const showSpinner = currentRef.current?.id !== id;
+    if (showSpinner) setLoading(true);
     setGlobalError(null);
     try {
       const detail = await api.getInvestigation(id);
-      setCurrentInvestigation(detail);
+      if (requestedIdRef.current === id) setCurrentInvestigation(detail);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to load investigation details.";
-      setGlobalError(message);
+      if (requestedIdRef.current === id) {
+        setGlobalError(errorMessage(err, "Couldn't load this investigation. Please try again."));
+      }
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
-  /** Silently refresh investigation data without triggering the loading spinner.
-   *  Used after review submission so the "Saved" badge updates without showing
-   *  the "Running Investigation" screen. */
+  /** Refresh the open investigation in place (live updates, after a review). */
   const refreshDetailSilent = async (id: string) => {
     try {
       const detail = await api.getInvestigation(id);
-      setCurrentInvestigation(detail);
+      if (requestedIdRef.current === id) setCurrentInvestigation(detail);
     } catch {
-      // Non-critical: user already sees the submitted state; swallow quietly.
+      // Non-critical: the next live update or fallback poll retries.
     }
   };
 
   useEffect(() => {
     void loadHistory();
-  }, []);
+  }, [loadHistory]);
+
+  // ── Live updates ──────────────────────────────────────────────────────────
+  useLiveRefresh(["investigations", "reviews", "case_summaries"], () => void loadHistory(), {
+    debounceMs: 500,
+  });
+
+  useLiveRefresh(
+    ["investigations", "investigation_events", "reviews", "case_summaries"],
+    (events) => {
+      const id = requestedIdRef.current;
+      if (!id) return;
+      const touchesCurrent =
+        events.length === 0 || events.some((e) => e.id === id || e.investigation_id === id);
+      if (touchesCurrent) void refreshDetailSilent(id);
+    },
+    { enabled: Boolean(investigationId), debounceMs: 250 }
+  );
+
+  // Fallback while the live connection is down: poll only a run still in progress.
+  const isRunning = currentInvestigation?.status === "running";
+  useEffect(() => {
+    if (!investigationId || !isRunning || liveState === "live") return;
+    const timer = setInterval(() => void refreshDetailSilent(investigationId), 4_000);
+    return () => clearInterval(timer);
+  }, [investigationId, isRunning, liveState]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -223,6 +229,7 @@ export function AppShell() {
 
   useEffect(() => {
     if (!investigationId) {
+      requestedIdRef.current = null;
       setCurrentInvestigation(null);
       return;
     }
@@ -230,25 +237,23 @@ export function AppShell() {
   }, [investigationId]);
 
   const handleLaunchInvestigation = async (question: string) => {
-    setIsNewModalOpen(false);
-    setLoading(true);
+    setLaunching(true);
     setGlobalError(null);
-    setCurrentInvestigation(null);
-    // Move to Console immediately so the operator sees the running state
-    // (History/Settings/etc. do not render the investigation loader).
-    navigate(routes.console);
-
     try {
-      const result = await api.runInvestigation({ question, wait: true });
-      setCurrentInvestigation(result);
-      await loadHistory();
-      navigate(routes.consoleInvestigation(result.id));
+      // Returns immediately with the run in `running` state; the console then
+      // follows each agent live through the event stream.
+      const started = await api.runInvestigation({ question });
+      requestedIdRef.current = started.id;
+      setCurrentInvestigation(started);
+      setIsNewModalOpen(false);
+      navigate(routes.consoleInvestigation(started.id));
+      void loadHistory();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Investigation failed to complete.";
-      setGlobalError(message);
-      navigate(routes.console);
+      setIsNewModalOpen(false);
+      setGlobalError(errorMessage(err, "Couldn't start the investigation. Please try again."));
+      if (!investigationId) navigate(routes.console);
     } finally {
-      setLoading(false);
+      setLaunching(false);
     }
   };
 
@@ -271,12 +276,10 @@ export function AppShell() {
     setGlobalError(null);
     try {
       await api.submitReview(currentInvestigation.id, payload);
-      // Use silent refresh — avoids triggering the full-page "Running Investigation" spinner
       await refreshDetailSilent(currentInvestigation.id);
-      await loadHistory();
+      void loadHistory();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to submit operator review.";
-      setGlobalError(message);
+      setGlobalError(errorMessage(err, "Couldn't save your review. Please try again."));
     } finally {
       setSubmittingReview(false);
     }
@@ -307,6 +310,7 @@ export function AppShell() {
     investigations,
     currentInvestigation,
     loading,
+    launching,
     submittingReview,
     activeSubView,
     selectedSourceId,
@@ -331,7 +335,10 @@ export function AppShell() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-[max(1rem,env(safe-area-inset-bottom))] min-w-0">
         {notice && (
-          <div className="mb-4 sm:mb-6 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-100 shadow-lg animate-slide-up overflow-hidden">
+          <div
+            role="alert"
+            className="mb-4 sm:mb-6 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-100 shadow-lg animate-slide-up overflow-hidden"
+          >
             <div className="p-3.5 sm:p-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
               <div className="flex items-start gap-2.5 min-w-0 flex-1">
                 <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -370,7 +377,7 @@ export function AppShell() {
         isOpen={isNewModalOpen}
         onClose={() => setIsNewModalOpen(false)}
         onSubmit={handleLaunchInvestigation}
-        loading={loading}
+        loading={launching}
       />
 
       <AuditDrawer

@@ -1,29 +1,37 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { AuthLayout } from "../layouts/AuthLayout";
 import { Button } from "../components/common/Button";
-import { api } from "../lib/api";
+import { FormAlert, TextField } from "../components/common/FormField";
+import { useFormFields } from "../hooks/useFormFields";
+import { api, ApiError, errorMessage } from "../lib/api";
 import { routes } from "../lib/routes";
+import { validateEmail } from "../lib/validation";
 
 export function ForgotPasswordPage() {
-  const [email, setEmail] = useState("");
+  const location = useLocation();
+  const prefill = (location.state as { email?: string } | null)?.email || "";
+  const form = useFormFields({ email: prefill }, (v) => ({ email: validateEmail(v.email) }));
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
     setMessage(null);
+    if (!form.validateForSubmit()) return;
+    setLoading(true);
     try {
-      const res = await api.forgotPassword({ email });
+      const res = await api.forgotPassword({ email: form.values.email.trim() });
       setMessage(
-        res.message ||
-          "If an account exists for that email, we sent a password reset link.",
+        `${res.message || "If an account exists for that email, we sent a password reset link."} ` +
+          "Check your inbox and spam folder — the link expires soon."
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      if (!(err instanceof ApiError && form.applyServerErrors(err.fieldErrors))) {
+        setError(errorMessage(err, "Couldn't send the reset link. Please try again."));
+      }
     } finally {
       setLoading(false);
     }
@@ -32,7 +40,7 @@ export function ForgotPasswordPage() {
   return (
     <AuthLayout
       title="Forgot password"
-      subtitle="We’ll email you a link to choose a new password."
+      subtitle="Enter your account email and we’ll send you a link to choose a new password."
       footer={
         <p>
           Remembered it?{" "}
@@ -42,30 +50,20 @@ export function ForgotPasswordPage() {
         </p>
       }
     >
-      {message ? (
-        <p className="text-xs text-accent-200 bg-accent-950/40 border border-accent-800/50 rounded-lg px-3 py-2">
-          {message}
-        </p>
-      ) : null}
-      <form className="space-y-3.5" onSubmit={onSubmit}>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-surface-300">Email</span>
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full min-h-11 rounded-lg bg-surface-900 border border-surface-700 px-3 text-base sm:text-sm text-surface-100 focus:outline-none focus:ring-2 focus:ring-accent-500/40"
-          />
-        </label>
-        {error ? (
-          <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/60 rounded-lg px-3 py-2">
-            {error}
-          </p>
-        ) : null}
+      {message ? <FormAlert tone="success">{message}</FormAlert> : null}
+      <form className="space-y-3.5" onSubmit={onSubmit} noValidate>
+        <TextField
+          label="Email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          placeholder="name@company.com"
+          autoFocus
+          {...form.bind("email")}
+        />
+        {error ? <FormAlert>{error}</FormAlert> : null}
         <Button type="submit" variant="accent" className="w-full" loading={loading}>
-          Send reset link
+          {message ? "Send another link" : "Send reset link"}
         </Button>
       </form>
     </AuthLayout>

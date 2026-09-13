@@ -39,7 +39,15 @@ _INLINE_RANGE = re.compile(
     rf"(?P<start>{_ISO})\s*{_RANGE_SEP}\s*(?P<end>{_ISO})",
     re.IGNORECASE,
 )
+_SINGLE_ISO = re.compile(rf"(?<![\d-])(?P<day>{_ISO})(?![\d-])")
 _SKU_RE = re.compile(r"\bSKU-[A-Za-z0-9_-]+\b", re.IGNORECASE)
+
+
+def _parse_iso(value: str) -> date | None:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _week_containing(d: date) -> tuple[date, date]:
@@ -120,18 +128,27 @@ def extract_compare_windows_from_question(
 ) -> tuple[DateRange, DateRange] | None:
     """Parse problem/prior windows from an operator question when dates are explicit.
 
-    Prefers the pattern: ``… in A to B compared to C to D`` → problem=A–B, prior=C–D.
-    If only one range is present, prior is the immediately preceding equal-length window.
+    - ``… in A to B compared to C to D`` → problem=A–B, prior=C–D.
+    - ``week of A`` (or a lone date in a question about a week) → the 7 days from A.
+    - any other lone date → that single day.
+    If only one window is present, prior is the immediately preceding equal-length window.
     """
+    text = question or ""
     ranges: list[DateRange] = []
-    for match in _INLINE_RANGE.finditer(question or ""):
-        start = date.fromisoformat(match.group("start"))
-        end = date.fromisoformat(match.group("end"))
-        if end < start:
+    for match in _INLINE_RANGE.finditer(text):
+        start = _parse_iso(match.group("start"))
+        end = _parse_iso(match.group("end"))
+        if start is None or end is None or end < start:
             continue
         ranges.append(
             DateRange(start, end, "explicit", f"{start.isoformat()} to {end.isoformat()}")
         )
+    if not ranges:
+        span = timedelta(days=6) if re.search(r"\bweek", text, re.IGNORECASE) else timedelta(0)
+        for match in _SINGLE_ISO.finditer(text):
+            day = _parse_iso(match.group("day"))
+            if day is not None:
+                ranges.append(DateRange(day, day + span, "explicit_anchor", match.group("day")))
     if not ranges:
         return None
     if len(ranges) >= 2:

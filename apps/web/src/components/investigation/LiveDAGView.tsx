@@ -14,33 +14,47 @@ import { InvestigationDetail } from "../../types";
 import { Badge } from "../common/Badge";
 import { SectionCard } from "../common/AppUI";
 
+/** agent_<node>, agent_<node>_done, agent_<node>_degraded (written by each agent). */
+const AGENT_EVENT = /^agent_(.+?)(_done|_degraded)?$/;
+/** Run concurrently after case memory; each logs a *_done event when finished. */
+const PARALLEL_NODES = ["data_investigator", "knowledge"];
+
 interface LiveDAGViewProps {
   investigation: InvestigationDetail;
 }
 
 export function LiveDAGView({ investigation }: LiveDAGViewProps) {
-  const nodeTrace = investigation.run?.node_trace || [];
   const status = investigation.status;
   const isRunning = status === "running";
-  const retryCount = investigation.retry_count || 0;
+  const retryCount = Math.max(investigation.retry_count || 0, investigation.audit?.retry_count || 0);
+
+  // Progress comes from the live timeline, so the pipeline advances while the run
+  // is in flight and renders correctly for runs opened later from History.
+  const started = new Set<string>([
+    ...(investigation.run?.node_trace || []),
+    ...(investigation.audit?.node_trace || []),
+  ]);
+  const finished = new Set<string>();
+  let lastNode: string | null = null;
+  for (const event of investigation.timeline || []) {
+    const match = AGENT_EVENT.exec(event.event_type);
+    if (!match) continue;
+    started.add(match[1]);
+    if (match[2] === "_done") finished.add(match[1]);
+    lastNode = match[1];
+  }
   const sqlCount = investigation.findings?.filter((f) => f.source_id.startsWith("sql_")).length || 0;
   const ragCount = investigation.findings?.filter((f) => f.source_id.startsWith("rag_")).length || 0;
 
-  const hasExecuted = (nodeKey: string) => {
-    if (nodeTrace.includes(nodeKey)) return true;
-    if (status === "completed") return true;
-    if (
-      status === "insufficient_evidence" &&
-      ["planner", "data_investigator", "knowledge", "synthesizer", "critic"].includes(nodeKey)
-    )
-      return true;
-    return false;
+  const isNodeActive = (nodeKey: string) => {
+    if (!isRunning || !started.has(nodeKey)) return false;
+    if (PARALLEL_NODES.includes(nodeKey)) return !finished.has(nodeKey);
+    return lastNode === nodeKey;
   };
 
-  const isNodeActive = (nodeKey: string) => {
-    if (!isRunning) return false;
-    const lastNode = nodeTrace[nodeTrace.length - 1];
-    return lastNode === nodeKey;
+  const hasExecuted = (nodeKey: string) => {
+    if (isNodeActive(nodeKey)) return false;
+    return started.has(nodeKey) || status === "completed";
   };
 
   const steps = [
@@ -64,7 +78,16 @@ export function LiveDAGView({ investigation }: LiveDAGViewProps) {
       icon: Brain,
       active: isNodeActive("planner"),
       done: hasExecuted("planner"),
-      status: status === "unsupported" ? "Unsupported" : status === "needs_clarification" ? "Clarify" : "Routed",
+      status:
+        status === "unsupported"
+          ? "Unsupported"
+          : status === "needs_clarification"
+          ? "Clarify"
+          : isNodeActive("planner")
+          ? "Planning…"
+          : started.has("planner")
+          ? "Routed"
+          : "Pending",
     },
     {
       key: "data_investigator",
@@ -109,7 +132,15 @@ export function LiveDAGView({ investigation }: LiveDAGViewProps) {
       active: isNodeActive("critic") || isNodeActive("recommender"),
       done: hasExecuted("recommender") || hasExecuted("critic"),
       status:
-        status === "completed" ? "Grounded" : status === "insufficient_evidence" ? "Retry" : "Active",
+        status === "completed"
+          ? "Grounded"
+          : status === "insufficient_evidence"
+          ? "Not grounded"
+          : isRunning
+          ? started.has("critic")
+            ? "Verifying…"
+            : "Pending"
+          : "—",
       statusColor: status === "completed" ? "text-accent-400" : undefined,
     },
   ];
@@ -117,7 +148,7 @@ export function LiveDAGView({ investigation }: LiveDAGViewProps) {
   return (
     <SectionCard
       title="Agent Pipeline"
-      subtitle="6-agent LangGraph execution flow"
+      subtitle={isRunning ? "Updating live as each agent runs" : "6-agent LangGraph execution flow"}
       icon={<Zap className="w-4 h-4" />}
       badge={
         <div className="flex flex-wrap items-center gap-1.5">

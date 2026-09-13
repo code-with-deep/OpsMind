@@ -196,89 +196,125 @@ export function canAccessApp(): boolean {
   return Boolean(getAccessToken());
 }
 
-/** Translate raw API error strings into plain-English user messages. */
-export function humanizeApiError(raw: string): string {
-  if (!raw) return "An unexpected error occurred. Please try again.";
-  const s = raw.toLowerCase();
+/** Error thrown by every API call. `message` is always safe to show to users. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  /** Server-side validation messages keyed by request field name. */
+  readonly fieldErrors: Record<string, string>;
 
-  // ── Guardrails ──────────────────────────────────────────────────────────
-  if (s.includes("input_guardrail_rejected") || s.includes("jailbreak") || s.includes("injection guardrail"))
-    return "Your question was flagged as potentially unsafe. Please rephrase it and try again.";
-
-  // ── Investigation pipeline ───────────────────────────────────────────────
-  if (s.includes("tenant_data_not_ready") || s.includes("upload company csv"))
-    return "No business data found. Upload a CSV ZIP in Settings before running investigations.";
-  if (s.includes("investigation_in_progress") || (s.includes("already") && s.includes("running")))
-    return "An investigation is already in progress. Please wait for it to finish before starting another.";
-  if (s.includes("fail_soft") || s.includes("could not reach a confident"))
-    return "The investigation couldn't reach a confident answer. Try rephrasing your question or uploading more data.";
-  if (s.includes("max_retries") || s.includes("critic") || s.includes("retry limit"))
-    return "The investigation ran out of retries. Try a more specific question.";
-  if (s.includes("needs_clarification") || s.includes("clarification"))
-    return "The question needs more context. Please be more specific and try again.";
-
-  // ── Auth ─────────────────────────────────────────────────────────────────
-  if (s.includes("incorrect") || s.includes("invalid credentials") || s.includes("wrong password") || (s.includes("401") && s.includes("password")))
-    return "Incorrect email or password. Please check your credentials and try again.";
-  if ((s.includes("email") && s.includes("already")) || s.includes("already registered"))
-    return "This email is already registered. Try signing in instead.";
-  if (s.includes("company") && (s.includes("taken") || s.includes("already exists") || s.includes("already used")))
-    return "That company name is already taken. Please choose a different name.";
-  if (s.includes("invite") && (s.includes("not found") || s.includes("invalid") || s.includes("expired") || s.includes("revoked")))
-    return "This invite code is invalid or has expired. Ask your admin for a new one.";
-  if (s.includes("invite") && s.includes("used"))
-    return "This invite code has already reached its usage limit.";
-  if (s.includes("unauthorized") || (s.includes("401") && !s.includes("password")))
-    return "Invalid email or password.";
-  if (s.includes("forbidden") || s.includes("403"))
-    return "You don't have permission to perform this action. Contact your admin.";
-  if (s.includes("password") && s.includes("short"))
-    return "Password must be at least 8 characters.";
-
-  // ── Upload / data ─────────────────────────────────────────────────────────
-  if (s.includes("413") || (s.includes("size") && s.includes("limit")) || s.includes("too large"))
-    return "The file is too large. Please reduce its size and try again.";
-  if ((s.includes("missing") || s.includes("required")) && (s.includes("products") || s.includes("orders") || s.includes("csv")))
-    return "ZIP is missing required files. Include products.csv, orders.csv, and order_items.csv.";
-  if (s.includes("invalid zip") || s.includes("bad zip") || s.includes("not a zip"))
-    return "The uploaded file is not a valid ZIP. Please check the file and try again.";
-  if (s.includes("playbook") && s.includes("limit"))
-    return "Playbook limit reached. Delete an existing playbook to upload a new one.";
-
-  // ── Network / server ──────────────────────────────────────────────────────
-  if (s.includes("429") || s.includes("rate limit") || s.includes("too many requests"))
-    return "Too many requests. Please wait a moment and try again.";
-  if (s.includes("500") || s.includes("internal server error"))
-    return "The server encountered an unexpected error. Please try again in a moment.";
-  if (s.includes("503") || s.includes("unavailable") || s.includes("service down"))
-    return "Service temporarily unavailable. Please try again shortly.";
-  if (s.includes("network") || s.includes("failed to fetch") || s.includes("econnrefused"))
-    return "Could not reach the server. Check your connection and try again.";
-  if (s.includes("timeout"))
-    return "The request timed out. Please try again.";
-
-  // ── Fallback: strip technical prefixes and show what's left ──────────────
-  const cleaned = raw
-    .replace(/^[a-z_]+:\s*/i, "")        // strip "error_code: " prefix
-    .replace(/\(status \d+\)/gi, "")      // strip "(status 400)"
-    .replace(/HTTP \d{3}\s*/gi, "")       // strip "HTTP 400 "
-    .trim();
-  return cleaned || "An unexpected error occurred. Please try again.";
+  constructor(
+    message: string,
+    status: number,
+    code: string | null = null,
+    fieldErrors: Record<string, string> = {}
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.fieldErrors = fieldErrors;
+  }
 }
 
-async function readErrorDetail(response: Response): Promise<string> {
-  const raw = await response.text();
-  if (!raw) return humanizeApiError(`HTTP ${response.status}`);
-  let detail = raw;
+const NETWORK_ERROR_MESSAGE =
+  "Can't reach the OpsMind server. Check your internet connection and try again.";
+
+function messageForStatus(status: number): string {
+  if (status === 400) return "That request couldn't be processed. Please check your input and try again.";
+  if (status === 401) return "Your session has expired. Please sign in again.";
+  if (status === 403) return "You don't have permission to do that. Contact your workspace admin.";
+  if (status === 404) return "We couldn't find that. It may have been deleted.";
+  if (status === 409) return "This conflicts with existing data. Refresh and try again.";
+  if (status === 413) return "The file is too large. Please upload a smaller file.";
+  if (status === 422) return "Some fields need attention. Please check the form and try again.";
+  if (status === 429) return "Too many attempts. Please wait a moment and try again.";
+  if (status >= 500) return "Something went wrong on our side. Please try again in a moment.";
+  return "Something went wrong. Please try again.";
+}
+
+/** Developer-facing server messages mapped to something a user can act on. */
+const SERVER_MESSAGE_REWRITES: Array<[RegExp, string]> = [
+  [/admin role required/i, "Only workspace admins can do this."],
+  [/user session required/i, "Please sign in with your email and password to do this."],
+  [/missing or invalid (api key|credentials)/i, "Your session has expired. Please sign in again."],
+];
+
+async function toApiError(response: Response): Promise<ApiError> {
+  let body: { detail?: unknown; errors?: Array<{ field?: string; message?: string }> } | null = null;
   try {
-    const errorJson = JSON.parse(raw);
-    if (typeof errorJson.detail === "string") detail = errorJson.detail;
-    else if (errorJson.detail?.reason) detail = `${errorJson.detail.error}: ${errorJson.detail.reason}`;
-    else if (errorJson.detail) detail = JSON.stringify(errorJson.detail);
+    body = await response.json();
   } catch {
-    detail = raw;
+    body = null;
   }
-  return humanizeApiError(detail);
+
+  const fieldErrors: Record<string, string> = {};
+  for (const e of Array.isArray(body?.errors) ? body.errors : []) {
+    if (e.field && e.message && !fieldErrors[e.field]) fieldErrors[e.field] = e.message;
+  }
+
+  const detail = body?.detail;
+  let message = "";
+  let code: string | null = null;
+  if (typeof detail === "string") {
+    message = detail;
+  } else if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const d = detail as { error?: string; reason?: string; request_id?: string };
+    code = d.error ?? null;
+    if (d.reason) message = d.reason;
+    else if (code === "internal_error")
+      message = `${messageForStatus(500)}${d.request_id ? ` (Reference: ${d.request_id})` : ""}`;
+  }
+  for (const [pattern, friendly] of SERVER_MESSAGE_REWRITES) {
+    if (pattern.test(message)) message = friendly;
+  }
+  return new ApiError(message || messageForStatus(response.status), response.status, code, fieldErrors);
+}
+
+export function authHeaders(): Headers {
+  const headers = new Headers();
+  const token = getAccessToken();
+  const apiKey = getApiKey();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  else if (apiKey) headers.set("X-API-Key", apiKey);
+  return headers;
+}
+
+/** Endpoints where a 401 means "wrong password" rather than "session expired". */
+const CREDENTIAL_CHECK_PATHS = new Set(["/auth/login", "/auth/change-password"]);
+
+async function send(
+  path: string,
+  init: RequestInit = {},
+  opts: { auth?: boolean } = {}
+): Promise<Response> {
+  const auth = opts.auth !== false;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const headers = auth ? authHeaders() : new Headers();
+  new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
+  if (typeof init.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}${normalizedPath}`, { ...init, headers });
+  } catch {
+    throw new ApiError(NETWORK_ERROR_MESSAGE, 0, "network_error");
+  }
+
+  const pathOnly = normalizedPath.split("?")[0];
+  if (response.status === 401 && auth && !CREDENTIAL_CHECK_PATHS.has(pathOnly)) {
+    // P1-9: outside credential checks a 401 means the session expired — clear
+    // it and send the user to /login instead of a confusing inline error.
+    clearSession();
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login?notice=session_expired";
+    }
+    throw new ApiError("Your session has expired. Please sign in again.", 401, "session_expired");
+  }
+  if (!response.ok) throw await toApiError(response);
+  return response;
 }
 
 async function request<T>(
@@ -286,71 +322,14 @@ async function request<T>(
   options: RequestInit = {},
   opts: { auth?: boolean } = {}
 ): Promise<T> {
-  const auth = opts.auth !== false;
-  const base = getApiBaseUrl();
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${base}${normalizedPath}`;
-
-  const headers = new Headers(options.headers || {});
-  headers.set("Content-Type", "application/json");
-
-  if (auth) {
-    const token = getAccessToken();
-    const apiKey = getApiKey();
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    } else if (apiKey) {
-      headers.set("X-API-Key", apiKey);
-    }
-  }
-
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
-
-  if (response.status === 401) {
-    // P1-9: only /auth/login (and /auth/change-password, which re-verifies the
-    // current password) legitimately means "wrong credentials". Everywhere else
-    // a 401 means the session expired — clear it and send the user back to
-    // /login instead of showing a nonsensical "wrong password" message on
-    // whatever page they happened to be on.
-    const isCredentialCheck =
-      normalizedPath === "/auth/login" || normalizedPath === "/auth/change-password";
-    if (isCredentialCheck) {
-      throw new Error(await readErrorDetail(response));
-    }
-    clearSession();
-    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login?notice=session_expired";
-    }
-    throw new Error("Your session has expired. Please sign in again.");
-  }
-
-  if (!response.ok) {
-    throw new Error(await readErrorDetail(response));
-  }
-
-  return response.json();
+  const response = await send(path, options, opts);
+  return response.json() as Promise<T>;
 }
 
 /** Fetch an authenticated binary file and save it via the browser's normal
  * download flow (auth needs a header, so a plain `<a href>` won't carry it). */
 async function downloadAuthedFile(path: string, filename: string): Promise<void> {
-  const base = getApiBaseUrl();
-  const headers = new Headers();
-  const token = getAccessToken();
-  const apiKey = getApiKey();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  else if (apiKey) headers.set("X-API-Key", apiKey);
-
-  const response = await fetch(`${base}${path}`, { headers });
-  if (response.status === 401) {
-    throw new Error("Your session has expired. Please sign in again.");
-  }
-  if (!response.ok) {
-    throw new Error(await readErrorDetail(response));
-  }
+  const response = await send(path);
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   try {
@@ -363,6 +342,11 @@ async function downloadAuthedFile(path: string, filename: string): Promise<void>
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** A user-facing message for any thrown value. */
+export function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
 }
 
 type AuthResponse = {
@@ -515,30 +499,10 @@ export const api = {
     count: number;
     message: string;
   }> {
-    const base = getApiBaseUrl();
     const form = new FormData();
     form.append("file", file);
     if (title?.trim()) form.append("title", title.trim());
-
-    const headers = new Headers();
-    const token = getAccessToken();
-    const apiKey = getApiKey();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    else if (apiKey) headers.set("X-API-Key", apiKey);
-
-    const response = await fetch(`${base}/playbooks`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
-
-    if (response.status === 401) {
-      throw new Error("Your session has expired. Please sign in again.");
-    }
-    if (!response.ok) {
-      throw new Error(await readErrorDetail(response));
-    }
-    return response.json();
+    return (await send("/playbooks", { method: "POST", body: form })).json();
   },
 
   async deletePlaybook(documentId: string): Promise<{ id: string; deleted: boolean }> {
@@ -564,29 +528,9 @@ export const api = {
   async uploadCsv(
     file: File
   ): Promise<{ job: IngestJobItem; ready: DataReadyStatus; message: string }> {
-    const base = getApiBaseUrl();
     const form = new FormData();
     form.append("file", file);
-
-    const headers = new Headers();
-    const token = getAccessToken();
-    const apiKey = getApiKey();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    else if (apiKey) headers.set("X-API-Key", apiKey);
-
-    const response = await fetch(`${base}/data/csv`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
-
-    if (response.status === 401) {
-      throw new Error("Your session has expired. Please sign in again.");
-    }
-    if (!response.ok) {
-      throw new Error(await readErrorDetail(response));
-    }
-    return response.json();
+    return (await send("/data/csv", { method: "POST", body: form })).json();
   },
 
   /** Download the sample CSV ZIP (own standalone dataset — not the shared demo
@@ -625,6 +569,9 @@ export const api = {
     return request<InvestigationDetail>(`/investigations/${id}`);
   },
 
+  /** Starts an investigation. By default it runs in the background and this
+   * resolves immediately with the `running` investigation; progress then
+   * arrives through the live event stream. */
   async runInvestigation(payload: {
     question: string;
     wait?: boolean;
@@ -633,7 +580,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({
         question: payload.question,
-        wait: payload.wait ?? true,
+        wait: payload.wait ?? false,
       }),
     });
   },

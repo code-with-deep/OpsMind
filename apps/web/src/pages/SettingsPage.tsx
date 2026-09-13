@@ -19,11 +19,22 @@ import { Button } from "../components/common/Button";
 import { Badge } from "../components/common/Badge";
 import { ToastContainer } from "../components/common/Toast";
 import { useToast } from "../hooks/useToast";
+import { useLiveRefresh } from "../hooks/useRealtime";
+import { useFormFields } from "../hooks/useFormFields";
+import { PasswordChecklist, TextField } from "../components/common/FormField";
+import {
+  validateCompanyName,
+  validateConfirmPassword,
+  validateExistingPassword,
+  validateNewPassword,
+} from "../lib/validation";
 import {
   AccessRequest,
   AccessUser,
   api,
+  ApiError,
   AuthUser,
+  errorMessage,
   DataReadyStatus,
   IngestJobItem,
   InviteItem,
@@ -46,9 +57,18 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [savingCompany, setSavingCompany] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const passwordForm = useFormFields(
+    { current_password: "", new_password: "", confirm_password: "" },
+    (v) => ({
+      current_password: validateExistingPassword(v.current_password, "Current password"),
+      new_password:
+        validateNewPassword(v.new_password, "New password") ??
+        (v.new_password === v.current_password
+          ? "New password must be different from your current password."
+          : undefined),
+      confirm_password: validateConfirmPassword(v.new_password, v.confirm_password),
+    })
+  );
   const [savingPassword, setSavingPassword] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [csvUploading, setCsvUploading] = useState(false);
@@ -133,29 +153,46 @@ export function SettingsPage() {
     }
   }, []);
 
-  // Poll access management every 12 seconds so:
-  // - Admins see new pending requests and status changes in real-time
-  // - Non-admins see their own status update (active → revoked) without a manual refresh
-  useEffect(() => {
-    if (!user) return;
+  /** Silently refresh data readiness, uploads and playbooks (no page spinner). */
+  const refreshDataSilent = async () => {
+    try {
+      const [pb, status, jobList] = await Promise.all([
+        api.listPlaybooks(),
+        api.dataReady(),
+        api.listIngestJobs(),
+      ]);
+      setPlaybooks(pb.playbooks || []);
+      setReady(status);
+      setJobs(jobList.jobs || []);
+    } catch {
+      // Non-critical — the next live update or a reload retries.
+    }
+  };
 
-    const interval = setInterval(async () => {
-      if (isAdmin) {
-        await refreshAccessSilent();
-      } else {
-        // For regular members: silently refresh their own profile so role/status stays current
-        try {
-          const me = await api.me();
-          setUser(me.user);
-          setStoredUser(me.user);
-        } catch {
-          // Session may have expired — RequireAuth will handle redirect
-        }
-      }
-    }, 12_000);
+  const refreshProfileSilent = async () => {
+    try {
+      const me = await api.me();
+      setUser(me.user);
+      setStoredUser(me.user);
+    } catch {
+      // Session may have expired — RequireAuth will handle redirect
+    }
+  };
 
-    return () => clearInterval(interval);
-  }, [isAdmin, user]);
+  // Live updates (replacing 12s polling): admins see new access requests,
+  // approvals and invite usage as they happen; members see role/access changes;
+  // everyone sees uploads and playbook changes made in other tabs or by teammates.
+  useLiveRefresh(
+    ["access_requests", "users", "invite_codes"],
+    () => {
+      if (isAdmin) void refreshAccessSilent();
+      void refreshProfileSilent();
+    },
+    { enabled: Boolean(user) }
+  );
+  useLiveRefresh(["documents", "ingest_jobs"], () => void refreshDataSilent(), {
+    enabled: Boolean(user),
+  });
 
   const createInvite = async () => {
     setCreating(true);
@@ -163,16 +200,10 @@ export function SettingsPage() {
     try {
       const res = await api.createInvite();
       setFreshCode(res.invite.code);
-      await load();
+      await refreshAccessSilent();
       toast("Invite code generated — copy it and share with your teammate.", "success");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      toast(
-        msg.includes("limit")
-          ? "Invite limit reached. Revoke an existing code first."
-          : "Could not generate invite code. Please try again.",
-        "error"
-      );
+      toast(errorMessage(err, "Could not generate an invite code. Please try again."), "error");
     } finally {
       setCreating(false);
     }
@@ -205,7 +236,11 @@ export function SettingsPage() {
   };
 
   const saveCompany = async () => {
-    if (!companyName.trim()) return;
+    const nameError = validateCompanyName(companyName);
+    if (nameError) {
+      toast(nameError, "error");
+      return;
+    }
     setSavingCompany(true);
     try {
       const res = await api.updateTenant({ name: companyName.trim() });
@@ -219,41 +254,30 @@ export function SettingsPage() {
       }
       toast("Company name saved.", "success");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      toast(
-        msg.includes("already") || msg.includes("taken")
-          ? "That company name is already taken. Choose a different name."
-          : "Could not save company name. Please try again.",
-        "error"
-      );
+      toast(errorMessage(err, "Could not save the company name. Please try again."), "error");
     } finally {
       setSavingCompany(false);
     }
   };
 
   const savePassword = async () => {
-    if (!currentPassword || !newPassword) return;
-    if (newPassword !== confirmPassword) {
-      toast("New passwords do not match.", "error");
-      return;
-    }
+    if (!passwordForm.validateForSubmit()) return;
     setSavingPassword(true);
     try {
       const res = await api.changePassword({
-        current_password: currentPassword,
-        new_password: newPassword,
+        current_password: passwordForm.values.current_password,
+        new_password: passwordForm.values.new_password,
       });
       setUser(res.user);
       setStoredUser(res.user);
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      toast("Password updated. Other sessions will need to sign in again.", "success");
+      passwordForm.reset();
+      toast("Password updated. Other devices will need to sign in again.", "success");
     } catch (err: unknown) {
-      toast(
-        err instanceof Error ? err.message : "Failed to change password",
-        "error"
-      );
+      if (err instanceof ApiError && err.status === 401) {
+        passwordForm.applyServerErrors({ current_password: err.message });
+      } else if (!(err instanceof ApiError && passwordForm.applyServerErrors(err.fieldErrors))) {
+        toast(errorMessage(err, "Could not change your password. Please try again."), "error");
+      }
     } finally {
       setSavingPassword(false);
     }
@@ -264,7 +288,7 @@ export function SettingsPage() {
     setUploading(true);
     try {
       const res = await api.uploadPlaybook(file);
-      await load();
+      await refreshDataSilent();
       const isZip = file.name.toLowerCase().endsWith(".zip");
       if (isZip) {
         const failed = res.errors?.length ?? 0;
@@ -278,13 +302,8 @@ export function SettingsPage() {
         toast(`"${file.name}" uploaded and indexed for investigations.`, "success");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
       toast(
-        msg.includes("limit") || msg.includes("size")
-          ? "File is too large. Maximum upload size exceeded."
-          : msg.includes("format") || msg.includes("type")
-          ? "Unsupported file type. Please upload a Markdown (.md), plain text, or .zip file."
-          : `Failed to upload playbook(s): ${msg || "please try again."}`,
+        errorMessage(err, "Couldn't upload the playbook. Use a Markdown (.md), text, or .zip file and try again."),
         "error"
       );
     } finally {
@@ -298,16 +317,11 @@ export function SettingsPage() {
     setCsvUploading(true);
     try {
       await api.uploadCsv(file);
-      await load();
+      await refreshDataSilent();
       toast(`"${file.name}" uploaded and ingested. Investigations are now unlocked.`, "success");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
       toast(
-        msg.includes("413") || msg.includes("size") || msg.includes("limit")
-          ? "ZIP file is too large. Reduce file size and try again."
-          : msg.includes("products") || msg.includes("orders") || msg.includes("csv")
-          ? "ZIP is missing required files. Include products.csv, orders.csv, and order_items.csv."
-          : `Upload failed: ${msg || "please check the file and try again."}`,
+        errorMessage(err, "Upload failed. The ZIP must contain products.csv, orders.csv, and order_items.csv."),
         "error"
       );
     } finally {
@@ -334,15 +348,15 @@ export function SettingsPage() {
     setCsvDeletingId(jobId);
     try {
       const res = await api.deleteIngestJob(jobId);
-      await load();
+      await refreshDataSilent();
       toast(
         res.wiped_business_data
           ? "Data file deleted. Business data cleared — upload a new ZIP to re-enable investigations."
           : "Data file removed.",
         "success"
       );
-    } catch {
-      toast("Could not delete the data file. Please try again.", "error");
+    } catch (err: unknown) {
+      toast(errorMessage(err, "Could not delete the data file. Please try again."), "error");
     } finally {
       setCsvDeletingId(null);
     }
@@ -366,10 +380,10 @@ export function SettingsPage() {
     setPlaybookDeletingId(id);
     try {
       await api.deletePlaybook(id);
-      await load();
+      await refreshDataSilent();
       toast(`"${title}" removed from playbooks.`, "success");
-    } catch {
-      toast("Could not delete the playbook. Please try again.", "error");
+    } catch (err: unknown) {
+      toast(errorMessage(err, "Could not delete the playbook. Please try again."), "error");
     } finally {
       setPlaybookDeletingId(null);
     }
@@ -381,10 +395,10 @@ export function SettingsPage() {
     setAccessActionLoading(id);
     try {
       await api.approveAccessRequest(id);
-      await load();
+      await refreshAccessSilent();
       toast(`Access approved for ${email}.`, "success");
-    } catch {
-      toast("Could not approve the request. Please try again.", "error");
+    } catch (err: unknown) {
+      toast(errorMessage(err, "Could not approve the request. Please try again."), "error");
     } finally {
       setAccessActionLoading(null);
     }
@@ -396,10 +410,10 @@ export function SettingsPage() {
       await api.rejectAccessRequest(id, rejectReason.trim() || undefined);
       setRejectingId(null);
       setRejectReason("");
-      await load();
+      await refreshAccessSilent();
       toast(`Access request from ${email} rejected.`, "info");
-    } catch {
-      toast("Could not reject the request. Please try again.", "error");
+    } catch (err: unknown) {
+      toast(errorMessage(err, "Could not reject the request. Please try again."), "error");
     } finally {
       setAccessActionLoading(null);
     }
@@ -410,10 +424,10 @@ export function SettingsPage() {
     try {
       await api.revokeUserAccess(userId);
       setRevokeConfirmId(null);
-      await load();
+      await refreshAccessSilent();
       toast(`Access revoked for ${email}.`, "success");
-    } catch {
-      toast("Could not revoke access. Please try again.", "error");
+    } catch (err: unknown) {
+      toast(errorMessage(err, "Could not revoke access. Please try again."), "error");
     } finally {
       setAccessActionLoading(null);
     }
@@ -509,52 +523,41 @@ export function SettingsPage() {
               Update the password for {user.email}
             </p>
           </div>
-          <div className="app-section-body space-y-3">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="block space-y-1">
-                <span className="text-xs text-surface-400">Current password</span>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  minLength={8}
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  className="w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-surface-400">New password</span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={8}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-surface-400">Confirm new password</span>
-                <input
+          <form
+            className="app-section-body space-y-3"
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              void savePassword();
+            }}
+          >
+            <div className="grid gap-3 sm:grid-cols-3 items-start">
+              <TextField
+                label="Current password"
+                type="password"
+                autoComplete="current-password"
+                {...passwordForm.bind("current_password")}
+              />
+              <div className="space-y-2.5">
+                <TextField
+                  label="New password"
                   type="password"
                   autoComplete="new-password"
-                  minLength={8}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full rounded-xl border border-surface-700 bg-surface-950/60 px-3 py-2 text-sm text-surface-100"
+                  {...passwordForm.bind("new_password")}
                 />
-              </label>
+                <PasswordChecklist password={passwordForm.values.new_password} />
+              </div>
+              <TextField
+                label="Confirm new password"
+                type="password"
+                autoComplete="new-password"
+                {...passwordForm.bind("confirm_password")}
+              />
             </div>
-            <Button
-              variant="accent"
-              size="sm"
-              loading={savingPassword}
-              disabled={!currentPassword || !newPassword || !confirmPassword}
-              onClick={() => void savePassword()}
-            >
+            <Button type="submit" variant="accent" size="sm" loading={savingPassword}>
               Update password
             </Button>
-          </div>
+          </form>
         </section>
       ) : null}
 

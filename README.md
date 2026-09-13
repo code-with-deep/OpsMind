@@ -111,6 +111,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 - **API:** Uvicorn `--reload` — save Python files under `apps/` or `packages/` and the API restarts automatically.
 - **DB:** unchanged (data persists in the `opsmind_pgdata` volume).
 
+**Linux note:** if only the legacy `docker-compose` (v1) binary is installed, use it in place of
+`docker compose` in every command. Migrations run automatically when the API container starts.
+The console receives live updates over `GET /events/stream` (Server-Sent Events), so pages
+update without refreshing — keep any reverse proxy in front of the API unbuffered for `/events`.
+
+When running the API or `pytest` outside Docker, point the host `DATABASE_URL*` values in `.env`
+at the host port Postgres is published on (`POSTGRES_PORT`), and run tests with
+`python -m pytest` against a separate test database.
+
 **Fastest option on Windows (frontend outside Docker):**
 
 ```powershell
@@ -265,6 +274,7 @@ OpsMind/
 | `0007` | Multi-tenant core (`tenants`, `users`, `api_keys`, `tenant_settings` + `tenant_id` + RLS) |
 | `0008` | Invite codes |
 | `0009` | CSV ingest jobs (`ingest_jobs`) |
+| `0016` | `opsmind_app` role so row-level security is actually enforced for tenant sessions; `pg_notify` triggers powering live console updates |
 
 Multi-tenant onboarding (MT2–MT5): signup → invite → CSV upload → playbooks → investigate.
 See `docs/MULTI_TENANT.md` and `AGENTS.md`. Demo seed data belongs to the `demo` tenant only.

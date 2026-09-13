@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, CheckCheck, Settings2 } from "lucide-react";
 import { api, NotificationItem } from "../../lib/api";
+import { useLiveRefresh, useRealtimeState } from "../../hooks/useRealtime";
 import { routes } from "../../lib/routes";
 
+/** Fallback only — while the live connection is up, updates are pushed. */
 const POLL_INTERVAL_MS = 30_000;
 
 interface NotificationBellProps {
@@ -29,35 +31,46 @@ export function NotificationBell({ className = "" }: NotificationBellProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const liveState = useRealtimeState();
 
-  // Poll unread count
+  const fetchCount = async () => {
+    try {
+      const res = await api.getUnreadCount();
+      setUnreadCount(res.count);
+    } catch {
+      // silently ignore — user may not be logged in yet
+    }
+  };
+
+  const loadList = async (showSpinner: boolean) => {
+    if (showSpinner) setLoadingList(true);
+    try {
+      const res = await api.listNotifications(10);
+      setNotifications(res.notifications);
+    } catch {
+      if (showSpinner) setNotifications([]);
+    } finally {
+      if (showSpinner) setLoadingList(false);
+    }
+  };
+
   useEffect(() => {
-    let mounted = true;
-    const fetchCount = async () => {
-      try {
-        const res = await api.getUnreadCount();
-        if (mounted) setUnreadCount(res.count);
-      } catch {
-        // silently ignore — user may not be logged in yet
-      }
-    };
     void fetchCount();
+    if (liveState === "live") return;
     const interval = setInterval(() => void fetchCount(), POLL_INTERVAL_MS);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
+    return () => clearInterval(interval);
+  }, [liveState]);
+
+  useLiveRefresh(["notifications"], () => {
+    void fetchCount();
+    if (openRef.current) void loadList(false);
+  });
 
   // Load notification list when panel opens
   useEffect(() => {
-    if (!open) return;
-    setLoadingList(true);
-    api
-      .listNotifications(10)
-      .then((res) => setNotifications(res.notifications))
-      .catch(() => setNotifications([]))
-      .finally(() => setLoadingList(false));
+    if (open) void loadList(true);
   }, [open]);
 
   // Close on outside click

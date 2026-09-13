@@ -41,7 +41,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", SYNC_URL)
     monkeypatch.setenv(
         "DATABASE_URL_READONLY",
-        "postgresql+asyncpg://opsmind_readonly:opsmind_readonly@localhost:5432/opsmind",
+        os.environ.get("DATABASE_URL_READONLY", "postgresql+asyncpg://opsmind_readonly:opsmind_readonly@localhost:5432/opsmind"),
     )
     monkeypatch.setenv("LLM_API_KEY", "")
     monkeypatch.setenv("LLM_API_BASE", "")

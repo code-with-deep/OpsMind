@@ -10,6 +10,30 @@ import secrets
 _ITERATIONS = 210_000
 _SALT_BYTES = 16
 
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
+
+
+def password_policy_error(password: str | None) -> str | None:
+    """User-facing reason a *new* password is rejected, or None when acceptable.
+
+    Mirrors ``passwordIssues`` in apps/web/src/lib/validation.ts — keep in sync.
+    Applied only when choosing a password (signup, join, reset, change), never at
+    login, so accounts created under older rules can still sign in.
+    """
+    value = password or ""
+    if len(value) < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters."
+    if len(value) > PASSWORD_MAX_LENGTH:
+        return f"Password must be at most {PASSWORD_MAX_LENGTH} characters."
+    if value != value.strip():
+        return "Password can't start or end with a space."
+    if not any(ch.isalpha() for ch in value):
+        return "Password must include at least one letter."
+    if not any(ch.isdigit() for ch in value):
+        return "Password must include at least one number."
+    return None
+
 
 def hash_password(password: str) -> str:
     """Return ``pbkdf2$iterations$salt_hex$hash_hex``."""

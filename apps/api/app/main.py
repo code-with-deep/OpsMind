@@ -2,11 +2,14 @@ from contextlib import asynccontextmanager
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.app.config import get_settings
 from api.app.db import dispose_engine
+from api.app.realtime import broker
 from api.app.routes.access import router as access_router
 from api.app.routes.auth import router as auth_router
 from api.app.routes.health import router as health_router
@@ -15,9 +18,77 @@ from api.app.routes.investigations import (
     router as investigations_router,
 )
 from api.app.routes.data import router as data_router
+from api.app.routes.events import router as events_router
 from api.app.routes.notifications import router as notifications_router
 from api.app.routes.playbooks import router as playbooks_router
 from api.app.routes.tools import dispose_tool_engines, router as tools_router
+from opsmind.graph.runner import fail_interrupted_investigations
+
+logger = logging.getLogger("opsmind.api")
+
+_FIELD_LABELS = {
+    "email": "Email",
+    "password": "Password",
+    "current_password": "Current password",
+    "new_password": "New password",
+    "company_name": "Company name",
+    "name": "Company name",
+    "invite_code": "Invite code",
+    "question": "Question",
+    "notes": "Notes",
+    "reason": "Reason",
+}
+
+
+def _friendly_validation_message(err: dict) -> tuple[str, str]:
+    """Turn one pydantic error into (field, sentence a non-developer understands)."""
+    loc = [str(p) for p in err.get("loc", ()) if p not in ("body", "query", "path")]
+    field = loc[-1] if loc else ""
+    label = _FIELD_LABELS.get(field, field.replace("_", " ").capitalize() or "Request")
+    kind = err.get("type", "")
+    ctx = err.get("ctx") or {}
+    raw = str(err.get("msg", ""))
+
+    if kind == "missing":
+        return field, f"{label} is required."
+    if field == "email" and kind in {"value_error", "string_type"}:
+        return field, "Please enter a valid email address, like name@company.com."
+    if field == "token":
+        return field, "This reset link is invalid or incomplete. Request a new one."
+    if kind == "string_too_short":
+        minimum = ctx.get("min_length")
+        if minimum in (None, 1):
+            return field, f"{label} is required."
+        return field, f"{label} must be at least {minimum} characters."
+    if kind == "string_too_long":
+        return field, f"{label} must be at most {ctx.get('max_length')} characters."
+    if kind == "value_error":
+        # Custom validators raise ValueError("<sentence>"); pydantic prefixes it.
+        return field, raw.removeprefix("Value error, ")
+    if kind in {"json_invalid", "model_attributes_type", "dict_type"}:
+        return field, "The request was malformed. Please refresh the page and try again."
+    return field, f"{label}: {raw}"
+
+
+async def _validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = [
+        {"field": field, "message": message}
+        for field, message in (_friendly_validation_message(e) for e in exc.errors())
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors[0]["message"] if errors else "Invalid request.", "errors": errors},
+    )
+
+
+def _recover_interrupted_runs() -> None:
+    try:
+        count = fail_interrupted_investigations(get_settings())
+    except Exception:  # noqa: BLE001 — DB may be unavailable (tests, cold start)
+        logger.warning("Skipped interrupted-investigation recovery", exc_info=True)
+        return
+    if count:
+        logger.warning("Marked %d interrupted investigation(s) as failed", count)
 
 
 def _configure_logging(settings) -> None:
@@ -91,7 +162,9 @@ def _sync_embedding_env() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _sync_embedding_env()
+    _recover_interrupted_runs()
     yield
+    broker.stop()
     dispose_investigation_runtime()
     dispose_tool_engines()
     await dispose_engine()
@@ -108,6 +181,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
 
     # P1-11: CORS must not combine allow_origins=["*"] with allow_credentials=True
     # (invalid per the CORS spec, and it lets any page make authenticated
@@ -132,6 +206,7 @@ def create_app() -> FastAPI:
     app.include_router(data_router)
     app.include_router(tools_router)
     app.include_router(investigations_router)
+    app.include_router(events_router)
 
     @app.get("/")
     async def root() -> dict[str, str]:

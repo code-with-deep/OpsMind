@@ -152,7 +152,8 @@ def score_theme_recall(case: GoldenCase, run_result: dict[str, Any]) -> MetricSc
     hyp = run_result.get("hypothesis") or {}
     if isinstance(hyp, dict):
         text_corpus_parts.append(str(hyp.get("summary") or ""))
-        for d in hyp.get("primary_drivers") or []:
+        # Hypothesis schema field is `drivers`; `primary_drivers` kept for old results.
+        for d in hyp.get("drivers") or hyp.get("primary_drivers") or []:
             text_corpus_parts.append(str(d))
 
     for f in run_result.get("findings") or []:

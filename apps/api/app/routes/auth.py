@@ -6,14 +6,15 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, EmailStr, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.app.auth import require_admin, require_tenant_context, require_user_session
+from api.app.auth import require_admin, require_user_session
 from api.app.config import get_settings
 from api.app.deps import get_tenant_session
 from opsmind.auth.email import build_password_reset_email, send_email
@@ -28,7 +29,7 @@ from opsmind.auth.password_reset import (
     hash_reset_token,
     reset_token_prefix,
 )
-from opsmind.auth.passwords import hash_password, verify_password
+from opsmind.auth.passwords import hash_password, password_policy_error, verify_password
 from opsmind.db.session import get_owner_session_factory
 from opsmind.db.tenant_models import (
     AccessRequest,
@@ -46,6 +47,7 @@ from opsmind.guardrails.rate_limit import rate_limit_by_ip, rate_limit_by_key
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
+_EMAIL_TAKEN = "An account with this email already exists. Sign in instead, or use a different email."
 _FORGOT_GENERIC = (
     "If an account exists for that email, we sent a password reset link."
 )
@@ -124,35 +126,73 @@ def _set_password(session: Session, user: User, new_password: str) -> None:
     _revoke_open_reset_tokens(session, user.id)
 
 
+def _strip(value: Any) -> Any:
+    return value.strip() if isinstance(value, str) else value
+
+
+def _normalize_invite_code(value: Any) -> Any:
+    return value.strip().upper() if isinstance(value, str) else value
+
+
+def _check_new_password(value: str) -> str:
+    problem = password_policy_error(value)
+    if problem:
+        raise ValueError(problem)
+    return value
+
+
+def _check_company_name(value: str) -> str:
+    if not any(ch.isalnum() for ch in value):
+        raise ValueError("Company name must include letters or numbers.")
+    return value
+
+
+#: Trimmed first so a stray space from copy/paste isn't reported as an invalid address.
+Email = Annotated[EmailStr, BeforeValidator(_strip)]
+#: A password being chosen (signup/join/reset/change) — full strength policy.
+NewPassword = Annotated[str, AfterValidator(_check_new_password)]
+#: A password being checked (login/current) — presence only, never the policy,
+#: so accounts created under older rules can still sign in.
+ExistingPassword = Annotated[str, Field(min_length=1, max_length=128)]
+CompanyName = Annotated[
+    str,
+    BeforeValidator(_strip),
+    Field(min_length=2, max_length=120),
+    AfterValidator(_check_company_name),
+]
+
+
 class SignupBody(BaseModel):
-    company_name: str = Field(min_length=2, max_length=255)
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    company_name: CompanyName
+    email: Email
+    password: NewPassword
 
 
 class LoginBody(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    email: Email
+    password: ExistingPassword
 
 
 class JoinInviteBody(BaseModel):
-    invite_code: str = Field(min_length=6, max_length=64)
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    invite_code: Annotated[
+        str, BeforeValidator(_normalize_invite_code), Field(min_length=6, max_length=64)
+    ]
+    email: Email
+    password: NewPassword
 
 
 class ChangePasswordBody(BaseModel):
-    current_password: str = Field(min_length=8, max_length=128)
-    new_password: str = Field(min_length=8, max_length=128)
+    current_password: ExistingPassword
+    new_password: NewPassword
 
 
 class ForgotPasswordBody(BaseModel):
-    email: EmailStr
+    email: Email
 
 
 class ResetPasswordBody(BaseModel):
-    token: str = Field(min_length=16, max_length=256)
-    new_password: str = Field(min_length=8, max_length=128)
+    token: Annotated[str, BeforeValidator(_strip), Field(min_length=16, max_length=256)]
+    new_password: NewPassword
 
 
 class CreateInviteBody(BaseModel):
@@ -184,7 +224,7 @@ def signup(body: SignupBody, request: Request) -> dict[str, Any]:
         if existing is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Email already registered — log in or use a different email",
+                detail=_EMAIL_TAKEN,
             )
 
         tenant_id = uuid.uuid4()
@@ -229,7 +269,12 @@ def signup(body: SignupBody, request: Request) -> dict[str, Any]:
             role="admin",
         )
         session.add(user)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            # Two signups for the same email racing past the check above.
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_EMAIL_TAKEN) from exc
         session.refresh(user)
         session.refresh(tenant)
         return sanitize_output_payload(_issue_token(user, tenant))
@@ -274,7 +319,7 @@ def login(body: LoginBody, request: Request) -> dict[str, Any]:
         if tenant.status != "active":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Tenant is not active",
+                detail="This workspace is no longer active. Contact your OpsMind administrator.",
             )
         if user.status != "active":
             raise HTTPException(
@@ -305,7 +350,7 @@ def change_password(
     if body.new_password == body.current_password:
         raise HTTPException(
             status_code=400,
-            detail="New password must be different from the current password",
+            detail="New password must be different from your current password.",
         )
     settings = get_settings()
     factory = get_owner_session_factory(settings.database_url_sync)
@@ -321,7 +366,7 @@ def change_password(
         if not verify_password(body.current_password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Current password is incorrect",
+                detail="Current password is incorrect.",
             )
         _set_password(session, user, body.new_password)
         session.commit()
@@ -422,7 +467,7 @@ def reset_password(body: ResetPasswordBody) -> dict[str, Any]:
         if token_row is None:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid or expired reset link",
+                detail="This reset link is invalid or has expired. Request a new one.",
             )
         now = datetime.now(timezone.utc)
         expires = token_row.expires_at
@@ -431,7 +476,7 @@ def reset_password(body: ResetPasswordBody) -> dict[str, Any]:
         if expires <= now:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid or expired reset link",
+                detail="This reset link is invalid or has expired. Request a new one.",
             )
 
         user = session.get(User, token_row.user_id)
@@ -439,7 +484,7 @@ def reset_password(body: ResetPasswordBody) -> dict[str, Any]:
         if user is None or tenant is None or tenant.status != "active":
             raise HTTPException(
                 status_code=400,
-                detail="Invalid or expired reset link",
+                detail="This reset link is invalid or has expired. Request a new one.",
             )
 
         _set_password(session, user, body.new_password)
@@ -474,7 +519,7 @@ def join_with_invite(body: JoinInviteBody, request: Request) -> dict[str, Any]:
         if existing_user is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Email already belongs to a company — one user per company in MVP",
+                detail="This email already has an OpsMind account. Sign in instead, or use a different email.",
             )
 
         invite = session.scalar(
@@ -484,17 +529,27 @@ def join_with_invite(body: JoinInviteBody, request: Request) -> dict[str, Any]:
             )
         )
         if invite is None:
-            raise HTTPException(status_code=400, detail="Invalid invite code")
+            raise HTTPException(
+                status_code=400,
+                detail="This invite code isn't valid. Check it for typos or ask your admin for a new one.",
+            )
 
         now = datetime.now(timezone.utc)
         if invite.expires_at is not None and invite.expires_at <= now:
-            raise HTTPException(status_code=400, detail="Invite code has expired")
+            raise HTTPException(
+                status_code=400, detail="This invite code has expired. Ask your admin for a new one."
+            )
         if invite.use_count >= invite.max_uses:
-            raise HTTPException(status_code=400, detail="Invite code has no uses left")
+            raise HTTPException(
+                status_code=400,
+                detail="This invite code has reached its usage limit. Ask your admin for a new one.",
+            )
 
         tenant = session.get(Tenant, invite.tenant_id)
         if tenant is None or tenant.status != "active":
-            raise HTTPException(status_code=400, detail="Invite tenant is not active")
+            raise HTTPException(
+                status_code=400, detail="The workspace for this invite is no longer active."
+            )
 
         # Check for any existing access request for this email in this tenant (any status)
         existing_request = session.scalar(
@@ -677,7 +732,7 @@ def create_invite(
     if active_count >= max_active:
         raise HTTPException(
             status_code=400,
-            detail=f"Soft limit: at most {max_active} active invite codes",
+            detail=f"You can have at most {max_active} active invite codes. Revoke an unused code first.",
         )
 
     raw = generate_invite_code()
@@ -765,7 +820,7 @@ def revoke_invite(
 
 
 class UpdateTenantBody(BaseModel):
-    name: str = Field(min_length=2, max_length=255)
+    name: CompanyName
 
 
 @router.patch("/tenant")

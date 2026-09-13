@@ -1,3 +1,4 @@
+import os
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,15 +16,15 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_PORT", "8000")
     monkeypatch.setenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind",
+        os.environ.get("DATABASE_URL", "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"),
     )
     monkeypatch.setenv(
         "DATABASE_URL_SYNC",
-        "postgresql://opsmind:opsmind@localhost:5432/opsmind",
+        os.environ.get("DATABASE_URL_SYNC", "postgresql://opsmind:opsmind@localhost:5432/opsmind"),
     )
     monkeypatch.setenv(
         "DATABASE_URL_READONLY",
-        "postgresql+asyncpg://opsmind_readonly:opsmind_readonly@localhost:5432/opsmind",
+        os.environ.get("DATABASE_URL_READONLY", "postgresql+asyncpg://opsmind_readonly:opsmind_readonly@localhost:5432/opsmind"),
     )
     monkeypatch.setenv("LLM_API_KEY", "")
     monkeypatch.setenv("LLM_API_BASE", "")

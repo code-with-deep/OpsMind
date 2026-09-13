@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { RequireAuth } from "./components/auth/RequireAuth";
 import { AppShell } from "./layouts/AppShell";
+import { RealtimeProvider } from "./hooks/useRealtime";
 import { LandingPageRoute } from "./pages/LandingPageRoute";
 import { ConsolePage } from "./pages/ConsolePage";
 import { HistoryPage } from "./pages/HistoryPage";
@@ -25,7 +26,9 @@ export function App() {
       <Route
         element={
           <RequireAuth>
-            <AppShell />
+            <RealtimeProvider>
+              <AppShell />
+            </RealtimeProvider>
           </RequireAuth>
         }
       >

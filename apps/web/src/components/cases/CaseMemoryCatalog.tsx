@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { CaseSummaryItem } from "../../types";
-import { api } from "../../lib/api";
+import { api, errorMessage } from "../../lib/api";
+import { useLiveRefresh } from "../../hooks/useRealtime";
+import { FormAlert } from "../common/FormField";
 import { formatDate } from "../../lib/utils";
 import { Badge } from "../common/Badge";
 import { Button } from "../common/Button";
@@ -16,22 +18,27 @@ export function CaseMemoryCatalog({ onSelectInvestigation }: CaseMemoryCatalogPr
   const [cases, setCases] = useState<CaseSummaryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const loadCases = async () => {
-    setLoading(true);
+  const loadCases = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     try {
       const res = await api.getCaseMemory();
       setCases(res.cases || []);
+      setError(null);
     } catch (err) {
-      console.error("Failed to load case memory:", err);
+      setError(errorMessage(err, "Couldn't load case memory. Please try again."));
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadCases();
+    void loadCases();
   }, []);
+
+  // Newly approved investigations appear without a manual refresh.
+  useLiveRefresh(["case_summaries"], () => void loadCases(false));
 
   const filtered = cases.filter((c) => {
     if (!search.trim()) return true;
@@ -60,12 +67,14 @@ export function CaseMemoryCatalog({ onSelectInvestigation }: CaseMemoryCatalogPr
             variant="outline"
             size="sm"
             icon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />}
-            onClick={loadCases}
+            onClick={() => void loadCases()}
           >
             Refresh
           </Button>
         }
       />
+
+      {error ? <FormAlert>{error}</FormAlert> : null}
 
       <SearchBar
         value={search}

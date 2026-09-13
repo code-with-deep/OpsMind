@@ -65,6 +65,18 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Revision ids here exceed Alembic's default VARCHAR(32) version column
+        # (0011_remove_warehouse_connections is 34 chars), so create/widen it up
+        # front — a plain `alembic upgrade head` on a fresh database otherwise
+        # fails partway, not just outside the container entrypoint.
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(128) NOT NULL PRIMARY KEY)"
+        )
+        connection.exec_driver_sql(
+            "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128)"
+        )
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

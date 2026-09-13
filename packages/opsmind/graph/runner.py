@@ -506,3 +506,44 @@ def list_investigations_view(
         )
     return sanitize_output_payload(out)
 
+
+def fail_interrupted_investigations(settings: Any, *, idle_minutes: int = 15) -> int:
+    """Mark runs left ``running`` by a previous API process as failed.
+
+    Background runs live in an in-process thread pool, so a restart mid-run
+    abandons them and the console would show them investigating forever. A run
+    counts as abandoned once it has produced no event for ``idle_minutes``.
+    """
+    from sqlalchemy import text
+
+    factory = get_owner_session_factory(settings.database_url_sync)
+    with factory() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT i.id, i.tenant_id
+                FROM investigations i
+                WHERE i.status = 'running'
+                  AND i.created_at < now() - make_interval(mins => :idle)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM investigation_events e
+                    WHERE e.investigation_id = i.id
+                      AND e.created_at >= now() - make_interval(mins => :idle)
+                  )
+                """
+            ),
+            {"idle": idle_minutes},
+        ).all()
+        for investigation_id, tenant_id in rows:
+            update_investigation(session, investigation_id=investigation_id, status="failed")
+            write_event(
+                session,
+                tenant_id=tenant_id,
+                investigation_id=investigation_id,
+                event_type="graph_interrupted",
+                payload={
+                    "error": "The server restarted before this investigation finished. "
+                    "Please run it again."
+                },
+            )
+    return len(rows)

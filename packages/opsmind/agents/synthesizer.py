@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -25,9 +26,41 @@ def _row_field(rows: list[Any], key: str) -> Any:
     return None
 
 
+def _as_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+_NESTING_PREFIX = re.compile(r"^[\s↳]+")
+
+
+def _prior_case_drivers(drivers: list[Any], limit: int = 2) -> list[str]:
+    """Measured drivers from an approved case, without its own historical/playbook lines.
+
+    Approved cases store the hypothesis drivers they were approved with, which can
+    include earlier "Historical context" lines — re-quoting those nested deeper
+    on every recall ("↳ ↳ ↳ ...") and crowded out current evidence.
+    """
+    out: list[str] = []
+    for raw in drivers:
+        text = _NESTING_PREFIX.sub("", str(raw)).strip()
+        if not text or text.startswith(("Historical context", "Playbook guidance")):
+            continue
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
     source_ids = [f.get("source_id") for f in findings if f.get("source_id")]
+    # Current SQL evidence ranks first, then SOP guidance, then prior cases, so
+    # the driver cap never drops measured rows in favour of context.
     drivers: list[str] = []
+    guidance: list[str] = []
+    history: list[str] = []
     problem_rev = None
     prior_rev = None
 
@@ -40,26 +73,24 @@ def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
             prior = f.get("prior_case") or {}
             title = (prior.get("title") or f.get("purpose") or "Prior case").strip()
             score = float(prior.get("score") or 0.0)
-            drivers.append(
-                f"Historical context (approved case, similarity={score:.2f}): {title}"
-            )
-            for d in (prior.get("drivers") or [])[:3]:
-                d_str = str(d).strip()
-                if d_str:
-                    drivers.append(f"  ↳ {d_str}")
+            line = f"Historical context (approved case, similarity={score:.2f}): {title}"
+            earlier = _prior_case_drivers(prior.get("drivers") or [])
+            if earlier:
+                line += f" — previously: {'; '.join(earlier)}"
+            history.append(line)
             continue
 
         if f.get("kind") != "sql":
             # Playbook hits — cite SOP themes without inventing SKUs/carriers.
             claim = ((f.get("evidence") or {}).get("claim") or "").lower()
             if "stockout" in claim or "replenish" in claim or "capacity" in claim:
-                drivers.append("Playbook guidance available for stockout / capacity escalation")
+                guidance.append("Playbook guidance available for stockout / capacity escalation")
             if "carrier" in claim or "sla" in claim or "delay" in claim:
-                drivers.append("Playbook guidance available for carrier delay response")
+                guidance.append("Playbook guidance available for carrier delay response")
             if "return" in claim or "defective" in claim:
-                drivers.append("Playbook guidance available for returns / quality quarantine")
+                guidance.append("Playbook guidance available for returns / quality quarantine")
             if "campaign" in claim or "promo" in claim:
-                drivers.append("Playbook guidance available for campaign / promotion management")
+                guidance.append("Playbook guidance available for campaign / promotion management")
             continue
 
         is_week_total = (
@@ -81,10 +112,17 @@ def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
                 sku = row.get("sku") or "SKU"
                 name = row.get("name") or ""
                 if "min_available" in row:
-                    drivers.append(
-                        f"Low stock on {sku} {name}: min available={row.get('min_available')}, "
-                        f"zero_days={row.get('zero_days')}"
-                    )
+                    zero_days = _as_int(row.get("zero_days"))
+                    if zero_days > 0 or row.get("min_available") == 0:
+                        # Zero available units is a stockout, not merely low stock.
+                        drivers.append(
+                            f"Stockout on {sku} {name}: available hit 0 on {zero_days} day(s) "
+                            f"(min available={row.get('min_available')})"
+                        )
+                    else:
+                        drivers.append(
+                            f"Low stock on {sku} {name}: min available={row.get('min_available')}"
+                        )
                 elif row.get("available") is not None:
                     drivers.append(
                         f"Inventory {sku} {name} on {row.get('snapshot_date')}: "
@@ -138,6 +176,8 @@ def _heuristic_hypothesis(findings: list[dict[str, Any]]) -> Hypothesis:
         )
     elif problem_rev is not None:
         drivers.insert(0, f"Problem-week revenue=${problem_rev}")
+    drivers.extend(guidance)
+    drivers.extend(history)
 
     # Deduplicate while preserving order
     seen: set[str] = set()

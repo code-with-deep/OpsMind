@@ -168,17 +168,22 @@ def clear_tenant_business_data(session: Session, tenant_id: UUID) -> None:
     session.flush()
 
 
-def _sync_id_sequences(session: Session) -> None:
-    """Keep SERIAL sequences above existing demo/seed rows (global integer PKs)."""
+def sync_id_sequences(session: Session) -> None:
+    """Keep SERIAL sequences above existing rows (integer PKs are global across tenants).
+
+    Never lowers a sequence: under row-level security MAX(id) only sees the
+    current tenant's rows, which can be far below ids other tenants already hold.
+    """
     for table in _SERIAL_TABLES:
         session.execute(
             text(
                 f"""
                 SELECT setval(
-                    pg_get_serial_sequence(:table_name, 'id'),
-                    COALESCE((SELECT MAX(id) FROM {table}), 0) + 1,
+                    seq,
+                    GREATEST(COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, nextval(seq)),
                     false
                 )
+                FROM pg_get_serial_sequence(:table_name, 'id') AS seq
                 """
             ),
             {"table_name": f"public.{table}"},
@@ -306,7 +311,7 @@ def ingest_csv_tables(
     if replace:
         clear_tenant_business_data(session, tenant_id)
 
-    _sync_id_sequences(session)
+    sync_id_sequences(session)
 
     counts: dict[str, int] = {}
 

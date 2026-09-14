@@ -126,3 +126,14 @@ export function getStatusBadgeConfig(status: string): {
       };
   }
 }
+
+/** "2026-08-16" → "Aug 16, 2026" (date-only strings, no timezone shift). */
+export function formatDay(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  if (!year || !month || !day) return isoDate;
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}

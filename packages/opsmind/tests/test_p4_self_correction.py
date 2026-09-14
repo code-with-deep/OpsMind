@@ -164,3 +164,17 @@ def test_e2e_critic_retry_when_sql_blocked_first_pass(settings):
     if result["status"] == "completed":
         assert result["recommendation"]
         assert result["finding_count"] >= 1
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Why did returns spike for AromaBrew Electric Kettle (SAMPLE-1002) between 2026-08-10 and 2026-08-16?",
+        "Why were deliveries delayed and which carriers caused the delays last week?",
+        "Why did orders fall after the promotions ended?",
+        "Did stockouts hit our warehouses between 2026-08-10 and 2026-08-16?",
+    ],
+)
+def test_triage_accepts_plural_domain_words(question):
+    route, _reason = classify_question(question)
+    assert route == "investigate"

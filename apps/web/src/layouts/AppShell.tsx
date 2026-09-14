@@ -5,7 +5,7 @@ import {
   InvestigationSummaryItem,
   ReviewDecision,
 } from "../types";
-import { api, errorMessage } from "../lib/api";
+import { api, errorMessage, OnboardingStatus } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { AuditDrawer } from "../components/investigation/AuditDrawer";
 import { NewInvestigationModal } from "../components/investigation/NewInvestigationModal";
@@ -35,6 +35,9 @@ export interface AppShellOutletContext {
   setSelectedSourceId: (id: string | null) => void;
   openNewInvestigationModal: () => void;
   openAuditDrawer: () => void;
+  /** Setup progress for the get-started checklist; null until loaded. */
+  onboarding: OnboardingStatus | null;
+  refreshOnboarding: () => Promise<void>;
 }
 
 type LaunchLocationState = {
@@ -140,6 +143,7 @@ export function AppShell() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const notice = globalError ? toAppNotice(globalError) : null;
   const liveState = useRealtimeState();
+  const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
 
   // The investigation the route currently asks for; responses for any other id
   // (e.g. a slow fetch after the user clicked elsewhere) are discarded.
@@ -187,14 +191,30 @@ export function AppShell() {
     }
   };
 
+  const loadOnboarding = useCallback(async () => {
+    try {
+      setOnboarding(await api.getOnboardingStatus());
+    } catch {
+      // Non-critical: the checklist stays hidden and investigations still validate server-side.
+    }
+  }, []);
+
   useEffect(() => {
     void loadHistory();
-  }, [loadHistory]);
+    void loadOnboarding();
+  }, [loadHistory, loadOnboarding]);
 
   // ── Live updates ──────────────────────────────────────────────────────────
   useLiveRefresh(["investigations", "reviews", "case_summaries"], () => void loadHistory(), {
     debounceMs: 500,
   });
+
+  // Checklist steps tick off as uploads, runs, reviews and invites happen anywhere.
+  useLiveRefresh(
+    ["ingest_jobs", "documents", "investigations", "reviews", "invite_codes", "users"],
+    () => void loadOnboarding(),
+    { debounceMs: 800 }
+  );
 
   useLiveRefresh(
     ["investigations", "investigation_events", "reviews", "case_summaries"],
@@ -323,6 +343,8 @@ export function AppShell() {
     setSelectedSourceId,
     openNewInvestigationModal: () => setIsNewModalOpen(true),
     openAuditDrawer: () => setIsAuditDrawerOpen(true),
+    onboarding,
+    refreshOnboarding: loadOnboarding,
   };
 
   return (
@@ -378,6 +400,11 @@ export function AppShell() {
         onClose={() => setIsNewModalOpen(false)}
         onSubmit={handleLaunchInvestigation}
         loading={launching}
+        onboarding={onboarding}
+        onShowSetup={() => {
+          setIsNewModalOpen(false);
+          navigate(routes.console);
+        }}
       />
 
       <AuditDrawer

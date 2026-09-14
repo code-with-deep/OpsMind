@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   BookOpen,
   Check,
@@ -46,6 +47,7 @@ import {
 type AccessTab = "pending" | "active" | "revoked";
 
 export function SettingsPage() {
+  const location = useLocation();
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [invites, setInvites] = useState<InviteItem[]>([]);
   const [playbooks, setPlaybooks] = useState<PlaybookItem[]>([]);
@@ -145,13 +147,20 @@ export function SettingsPage() {
 
   useEffect(() => {
     void load();
-    // Scroll to #access if anchor is present
-    if (window.location.hash === "#access") {
-      setTimeout(() => {
-        document.getElementById("access-management")?.scrollIntoView({ behavior: "smooth" });
-      }, 400);
-    }
   }, []);
+
+  // Deep links from the get-started checklist and notifications (#business-data,
+  // #playbooks, #invites, #access) — scroll once the sections have rendered.
+  useEffect(() => {
+    const anchor = location.hash.slice(1);
+    if (!anchor || loading) return;
+    const id = anchor === "access" ? "access-management" : anchor;
+    const timer = setTimeout(
+      () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      150
+    );
+    return () => clearTimeout(timer);
+  }, [location.hash, loading]);
 
   /** Silently refresh data readiness, uploads and playbooks (no page spinner). */
   const refreshDataSilent = async () => {
@@ -562,7 +571,7 @@ export function SettingsPage() {
       ) : null}
 
       {user ? (
-        <section className="app-section">
+        <section className="app-section scroll-mt-20" id="business-data">
           <div className="app-section-header flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="font-app-heading text-base text-white">Business data</h3>
@@ -679,7 +688,7 @@ export function SettingsPage() {
       ) : null}
 
       {user ? (
-        <section className="app-section">
+        <section className="app-section scroll-mt-20" id="playbooks">
           <div className="app-section-header flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="font-app-heading text-base text-white">Playbooks</h3>
@@ -779,7 +788,7 @@ export function SettingsPage() {
       ) : null}
 
       {isAdmin ? (
-        <section className="app-section">
+        <section className="app-section scroll-mt-20" id="invites">
           <div className="app-section-header flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="font-app-heading text-base text-white">Invite codes</h3>
@@ -862,7 +871,7 @@ export function SettingsPage() {
 
       {/* ── Access Management (admin only) ──────────────────────────────────── */}
       {isAdmin ? (
-        <section className="app-section" id="access-management">
+        <section className="app-section scroll-mt-20" id="access-management">
           <div className="app-section-header">
             <div>
               <h3 className="font-app-heading text-base text-white flex items-center gap-2">

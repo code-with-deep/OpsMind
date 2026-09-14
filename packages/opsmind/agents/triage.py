@@ -47,25 +47,26 @@ _OPS_KEYWORDS = [
     r"\brevenue\b",
     r"\bsales\b",
     r"\binventory\b",
-    r"\bstockout\b",
+    r"\bstockouts?\b",
     r"\bstock\b",
     r"\bskus?\b",          # matches both "sku" and "skus"
-    r"\bshipment\b",
+    r"\bshipments?\b",
     r"\bshipping\b",
     r"\bdelivery\b",
     r"\bdeliveries\b",
-    r"\bcarrier\b",
+    r"\bcarriers?\b",
     r"\bsla\b",
-    r"\bdelay\b",
+    r"\bdelay(s|ed)?\b",
     r"\blate\b",
-    r"\bpromo\b",
-    r"\bcampaign\b",
-    r"\breturn\b",
-    r"\brefund\b",
-    r"\border\b",
+    r"\bpromos?\b",
+    r"\bpromotions?\b",
+    r"\bcampaigns?\b",
+    r"\breturns?\b",
+    r"\brefunds?\b",
+    r"\borders?\b",
     r"\bcancel",
     r"\bfulfill",
-    r"\bwarehouse\b",
+    r"\bwarehouses?\b",
     r"\becommerce\b",
     r"\be-commerce\b",
     r"\bcapacit",           # matches "capacity", "capacities"
@@ -104,12 +105,10 @@ def classify_question(question: str) -> tuple[Route, str]:
     # unsupported check when ops keywords are also present") regressed
     # test_triage_poem_unsupported / test_triage_payroll_unsupported, both of
     # which mention "warehouse" alongside an off-domain word and are expected
-    # to stay "unsupported". A correct fix needs the ops-keyword patterns to
-    # handle plurals consistently first (several, like \bdelay\b, don't match
-    # "delays" — see \bskus?\b for the pattern that does it right) and a
-    # calibrated hit threshold, verified against the test suite. Left as
-    # unsupported-first (original, test-verified behavior) rather than ship an
-    # unverified change.
+    # to stay "unsupported". The ops keywords now accept plurals ("returns",
+    # "delays", "orders"), so a precedence change would additionally need a
+    # calibrated hit threshold verified against the test suite. Kept
+    # unsupported-first (original, test-verified behavior).
     for pat in _UNSUPPORTED_PATTERNS:
         if re.search(pat, lower):
             return (

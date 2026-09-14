@@ -100,6 +100,29 @@ export type AccessRequestStatus = {
   rejection_reason?: string | null;
 };
 
+export type OnboardingSuggestion = {
+  kind: "revenue" | "stockout" | "carrier" | "returns";
+  title: string;
+  question: string;
+};
+
+/** Setup progress for the get-started checklist (GET /onboarding/status). */
+export type OnboardingStatus = {
+  is_admin: boolean;
+  ready_to_investigate: boolean;
+  missing: Array<"business_data" | "playbooks">;
+  steps: {
+    business_data: { done: boolean; products: number; orders: number };
+    playbooks: { done: boolean; count: number };
+    first_investigation: { done: boolean; count: number; latest_id: string | null };
+    first_review: { done: boolean };
+    team: { done: boolean; invites: number; members: number };
+  };
+  data_coverage: { start: string; end: string } | null;
+  suggested_questions: OnboardingSuggestion[];
+  sample_data_available: boolean;
+};
+
 export type JoinPendingResponse = {
   status: 'pending';
   message: string;
@@ -544,6 +567,19 @@ export const api = {
    * individually via "Upload SOP" — playbook uploads are one file at a time. */
   async downloadSamplePlaybooks(): Promise<void> {
     return downloadAuthedFile("/playbooks/sample-template", "opsmind_sample_playbooks.zip");
+  },
+
+  async getOnboardingStatus(): Promise<OnboardingStatus> {
+    return request<OnboardingStatus>("/onboarding/status");
+  },
+
+  /** Loads the sample store (CSV bundle + playbooks) into this workspace;
+   * never replaces business data or playbooks the workspace already has. */
+  async loadSampleData(): Promise<{
+    loaded: { business_data: boolean; playbooks: number };
+    message: string;
+  }> {
+    return request("/onboarding/sample-data", { method: "POST" });
   },
 
   async listInvestigations(params?: {

@@ -48,7 +48,7 @@ SAMPLE_TEMPLATE_PATH = (
 )
 
 
-def _soft_limits(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
+def csv_soft_limits(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
     settings = get_settings()
     row = session.get(TenantSettings, tenant_id)
     limits = dict(row.soft_limits or {}) if row else {}
@@ -114,37 +114,19 @@ def list_ingest_jobs(
     return sanitize_output_payload({"jobs": items, "count": len(items)})
 
 
-@router.post("/csv")
-async def upload_csv_bundle(
-    file: UploadFile = File(...),
-    tenant: TenantContext = Depends(require_admin),
-    session: Session = Depends(get_tenant_session),
-) -> dict[str, Any]:
-    filename = file.filename or "data.zip"
-    limits = _soft_limits(session, tenant.tenant_id)
-    max_bytes = int(limits["max_csv_upload_bytes"])
-    max_rows = int(limits["max_csv_rows"])
+def run_csv_ingest(
+    session: Session,
+    *,
+    tenant: TenantContext,
+    filename: str,
+    raw: bytes,
+    max_rows: int,
+) -> IngestJob:
+    """Record an ingest job, load the ZIP's CSVs into the tenant's tables (replacing
+    earlier business data) and mark the job done or failed.
 
-    # P0-7: Check Content-Length header before reading entire body into RAM.
-    content_length = file.headers.get("content-length")
-    if content_length:
-        try:
-            content_length_int = int(content_length)
-            if content_length_int > max_bytes:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"CSV upload exceeds soft limit of {max_bytes} bytes",
-                )
-        except ValueError:
-            pass  # Invalid header, continue with byte-checking below
-
-    raw = await file.read()
-    if len(raw) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"CSV upload exceeds soft limit of {max_bytes} bytes",
-        )
-
+    Shared by uploads and the onboarding sample store. Raises HTTPException on failure.
+    """
     job = IngestJob(
         id=uuid.uuid4(),
         tenant_id=tenant.tenant_id,
@@ -207,6 +189,41 @@ async def upload_csv_bundle(
             job.completed_at = datetime.now(timezone.utc)
             session.commit()
         raise safe_error from exc
+    return job
+
+
+@router.post("/csv")
+async def upload_csv_bundle(
+    file: UploadFile = File(...),
+    tenant: TenantContext = Depends(require_admin),
+    session: Session = Depends(get_tenant_session),
+) -> dict[str, Any]:
+    filename = file.filename or "data.zip"
+    limits = csv_soft_limits(session, tenant.tenant_id)
+    max_bytes = int(limits["max_csv_upload_bytes"])
+    max_rows = int(limits["max_csv_rows"])
+
+    # P0-7: Check Content-Length header before reading entire body into RAM.
+    content_length = file.headers.get("content-length")
+    if content_length:
+        try:
+            content_length_int = int(content_length)
+            if content_length_int > max_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"CSV upload exceeds soft limit of {max_bytes} bytes",
+                )
+        except ValueError:
+            pass  # Invalid header, continue with byte-checking below
+
+    raw = await file.read()
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"CSV upload exceeds soft limit of {max_bytes} bytes",
+        )
+
+    job = run_csv_ingest(session, tenant=tenant, filename=filename, raw=raw, max_rows=max_rows)
 
     ready = tenant_data_ready(session, tenant.tenant_id)
     return sanitize_output_payload(

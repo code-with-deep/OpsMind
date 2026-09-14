@@ -46,6 +46,10 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
         },
+        "/onboarding": {
+          target: apiProxyTarget,
+          changeOrigin: true,
+        },
         "/events": {
           target: apiProxyTarget,
           changeOrigin: true,

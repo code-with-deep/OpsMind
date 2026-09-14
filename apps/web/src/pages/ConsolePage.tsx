@@ -1,4 +1,5 @@
-import { useOutletContext } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { AppShellOutletContext } from "../layouts/AppShell";
 import { LiveDAGView } from "../components/investigation/LiveDAGView";
 import { ReportView } from "../components/investigation/ReportView";
@@ -11,6 +12,9 @@ import { SubViewTabs } from "../components/common/AppUI";
 import { getStatusBadgeConfig } from "../lib/utils";
 import { AlertTriangle, Clock, Layers, PlusCircle, RotateCw, Sparkles } from "lucide-react";
 import { useRealtimeState } from "../hooks/useRealtime";
+import { GetStartedChecklist } from "../components/onboarding/GetStartedChecklist";
+import { getStoredUser } from "../lib/api";
+import { routes } from "../lib/routes";
 
 export function ConsolePage() {
   const {
@@ -27,8 +31,30 @@ export function ConsolePage() {
     openAuditDrawer,
     handleLaunchInvestigation,
     launching,
+    onboarding,
+    refreshOnboarding,
   } = useOutletContext<AppShellOutletContext>();
   const liveState = useRealtimeState();
+  const navigate = useNavigate();
+
+  // "Hide for now" is remembered per workspace in this browser.
+  const hideKey = `opsmind_get_started_hidden:${getStoredUser()?.tenant?.id ?? "workspace"}`;
+  const [checklistHidden, setChecklistHidden] = useState(() => {
+    try {
+      return localStorage.getItem(hideKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setChecklistVisibility = (hidden: boolean) => {
+    setChecklistHidden(hidden);
+    try {
+      if (hidden) localStorage.setItem(hideKey, "1");
+      else localStorage.removeItem(hideKey);
+    } catch {
+      // Storage unavailable (private mode) — visibility just isn't remembered.
+    }
+  };
 
   if (loading) {
     return (
@@ -42,6 +68,22 @@ export function ConsolePage() {
             Fetching the report, evidence, and timeline…
           </p>
         </div>
+      </div>
+    );
+  }
+
+  if (!currentInvestigation && onboarding && !checklistHidden) {
+    return (
+      <div className="animate-fadeIn">
+        <GetStartedChecklist
+          status={onboarding}
+          launching={launching}
+          onRunQuestion={(question) => void handleLaunchInvestigation(question)}
+          onAskOwnQuestion={openNewInvestigationModal}
+          onOpenInvestigation={(id) => navigate(routes.consoleInvestigation(id))}
+          onRefresh={refreshOnboarding}
+          onHide={() => setChecklistVisibility(true)}
+        />
       </div>
     );
   }
@@ -64,6 +106,15 @@ export function ConsolePage() {
           >
             Start Investigation
           </Button>
+          {onboarding ? (
+            <button
+              type="button"
+              onClick={() => setChecklistVisibility(false)}
+              className="block mx-auto text-xs text-accent-400 hover:text-accent-300"
+            >
+              Show setup checklist
+            </button>
+          ) : null}
         </div>
       </div>
     );

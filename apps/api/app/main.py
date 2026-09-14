@@ -20,6 +20,7 @@ from api.app.routes.investigations import (
 from api.app.routes.data import router as data_router
 from api.app.routes.events import router as events_router
 from api.app.routes.notifications import router as notifications_router
+from api.app.routes.onboarding import router as onboarding_router
 from api.app.routes.playbooks import router as playbooks_router
 from api.app.routes.tools import dispose_tool_engines, router as tools_router
 from opsmind.graph.runner import fail_interrupted_investigations
@@ -202,6 +203,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(access_router)
     app.include_router(notifications_router)
+    app.include_router(onboarding_router)
     app.include_router(playbooks_router)
     app.include_router(data_router)
     app.include_router(tools_router)

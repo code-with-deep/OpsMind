@@ -43,7 +43,7 @@ SAMPLE_PLAYBOOKS_ZIP = (
 )
 
 
-def _soft_limits(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
+def playbook_soft_limits(session: Session, tenant_id: uuid.UUID) -> dict[str, Any]:
     settings = get_settings()
     row = session.get(TenantSettings, tenant_id)
     limits = dict(row.soft_limits or {}) if row else {}
@@ -111,7 +111,7 @@ def download_sample_playbooks(
     )
 
 
-def _current_playbook_count(session: Session, tenant_id: uuid.UUID) -> int:
+def current_playbook_count(session: Session, tenant_id: uuid.UUID) -> int:
     return int(
         session.scalar(
             select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)
@@ -120,7 +120,7 @@ def _current_playbook_count(session: Session, tenant_id: uuid.UUID) -> int:
     )
 
 
-def _ingest_one_playbook(
+def ingest_one_playbook(
     session: Session,
     *,
     tenant_id: uuid.UUID,
@@ -191,7 +191,7 @@ async def upload_playbook(
             detail="Only Markdown (.md), plain text (.txt), or a .zip of those files is supported",
         )
 
-    limits = _soft_limits(session, tenant.tenant_id)
+    limits = playbook_soft_limits(session, tenant.tenant_id)
     max_bytes = int(limits["max_playbook_upload_bytes"])
     max_count = int(limits["max_playbooks"])
 
@@ -215,7 +215,7 @@ async def upload_playbook(
             detail=f"Upload exceeds soft limit of {max_bytes} bytes",
         )
 
-    doc_count = [_current_playbook_count(session, tenant.tenant_id)]
+    doc_count = [current_playbook_count(session, tenant.tenant_id)]
 
     if suffix in _ZIP_SUFFIXES:
         try:
@@ -251,7 +251,7 @@ async def upload_playbook(
             )
 
         results = [
-            _ingest_one_playbook(
+            ingest_one_playbook(
                 session,
                 tenant_id=tenant.tenant_id,
                 filename=Path(info.filename).name,
@@ -275,7 +275,7 @@ async def upload_playbook(
             }
         )
 
-    result = _ingest_one_playbook(
+    result = ingest_one_playbook(
         session,
         tenant_id=tenant.tenant_id,
         filename=filename,

@@ -1,4 +1,10 @@
-"""Container entrypoint — host/port come only from environment."""
+"""Backend entrypoint: apply database migrations, then serve the API.
+
+Run from the repository root (settings are read from ./.env):
+
+    python -m api.entrypoint                     # serve on API_HOST:API_PORT
+    UVICORN_RELOAD=1 python -m api.entrypoint    # auto-reload while developing
+"""
 
 from __future__ import annotations
 
@@ -6,101 +12,67 @@ import os
 import sys
 from pathlib import Path
 
-# P2-16: arbitrary fixed key for a Postgres advisory lock guarding migrations —
-# prevents multiple replicas starting simultaneously from racing `alembic upgrade`.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# P2-16: fixed key for a Postgres advisory lock guarding migrations — prevents
+# several API processes starting at once from racing `alembic upgrade`.
 _MIGRATION_LOCK_KEY = 0x4F70734D696E64  # "OpsMind" as a rough numeric tag
 
 
-def _run_migrations() -> None:
-    """Run alembic upgrade head before starting the server.
+def _run_migrations(database_url_sync: str) -> None:
+    """Run `alembic upgrade head` under an advisory lock.
 
-    Also widens alembic_version.version_num to VARCHAR(128) when needed,
-    because the default Alembic DDL only creates VARCHAR(32) which is too
-    narrow for migration names longer than 32 characters.
-
-    P2-16: migration failure is now FATAL (process exits non-zero) instead of
-    printing a warning and starting the server against a possibly half-migrated
-    schema. A Postgres advisory lock also serializes migrations across replicas
-    that start concurrently.
+    P2-16: failure is fatal — never serve traffic against a schema that failed
+    to migrate. alembic/env.py reads the URL from the environment and widens
+    alembic_version for our long revision ids.
     """
     import sqlalchemy
     from alembic import command
     from alembic.config import Config
 
-    # Repo root (/app in the container) — also works when run outside Docker.
-    alembic_cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    os.environ.setdefault("DATABASE_URL_SYNC", database_url_sync)
+    alembic_cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", str(_REPO_ROOT / "packages/opsmind/db/alembic"))
 
-    # Resolve sync DB URL (Alembic needs a non-async driver)
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get(
-        "DATABASE_URL_SYNC_DOCKER"
-    )
-    if db_url:
-        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
-
-    engine = sqlalchemy.create_engine(
-        db_url or alembic_cfg.get_main_option("sqlalchemy.url")
-    )
+    engine = sqlalchemy.create_engine(database_url_sync)
     try:
         with engine.connect() as conn:
             conn.execute(sqlalchemy.text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+            conn.commit()
             try:
-                # Bug found by an actual fresh-DB end-to-end run: on a brand-new
-                # database `alembic_version` doesn't exist yet, so the ALTER
-                # below (which only handles an *existing* narrow column) is a
-                # silent no-op — then Alembic creates the table itself with its
-                # own default VARCHAR(32), and the run fails partway through the
-                # very first upgrade once a revision id longer than 32 chars
-                # shows up (0011_remove_warehouse_connections is 34 chars).
-                # Pre-create the table at the right width so Alembic finds it
-                # already there and never applies its narrow default.
-                conn.execute(
-                    sqlalchemy.text(
-                        "CREATE TABLE IF NOT EXISTS alembic_version "
-                        "(version_num VARCHAR(128) NOT NULL PRIMARY KEY)"
-                    )
-                )
-                conn.commit()
-
-                # Also widen in place for a database that already has the table
-                # at the old narrow width from a prior deployment.
-                try:
-                    conn.execute(
-                        sqlalchemy.text(
-                            "ALTER TABLE alembic_version "
-                            "ALTER COLUMN version_num TYPE VARCHAR(128)"
-                        )
-                    )
-                    conn.commit()
-                except Exception:
-                    conn.rollback()  # already wide enough — fine
-
                 command.upgrade(alembic_cfg, "head")
                 print("[entrypoint] Alembic migrations applied.", flush=True)
             finally:
-                conn.execute(sqlalchemy.text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+                conn.execute(
+                    sqlalchemy.text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY}
+                )
                 conn.commit()
     finally:
         engine.dispose()
 
 
 def main() -> None:
-    host = os.environ.get("API_HOST")
-    port_raw = os.environ.get("API_PORT")
-    if not host or not port_raw:
-        print("API_HOST and API_PORT must be set via environment /.env", file=sys.stderr)
+    from dotenv import load_dotenv
+    from pydantic import ValidationError
+
+    from api.app.config import get_settings
+
+    # Export .env into the process environment (already-set variables win) so
+    # modules reading os.environ — pool sizes, read-only role, the reload worker —
+    # see the same configuration as Settings.
+    load_dotenv(_REPO_ROOT / ".env", override=False)
+
+    try:
+        settings = get_settings()
+    except ValidationError as exc:
+        # Name the fields only — the full error would echo configured secrets.
+        fields = sorted({".".join(str(p) for p in err["loc"]).upper() for err in exc.errors()})
+        print(f"[entrypoint] Missing or invalid settings in .env: {', '.join(fields)}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        port = int(port_raw)
-    except ValueError:
-        print(f"API_PORT must be an integer, got: {port_raw!r}", file=sys.stderr)
-        sys.exit(1)
-
-    # Apply any pending DB migrations before accepting traffic. Fatal on failure
-    # (P2-16) — never serve traffic against a schema that failed to migrate.
-    try:
-        _run_migrations()
-    except Exception as exc:
+        _run_migrations(settings.database_url_sync)
+    except Exception as exc:  # noqa: BLE001
         print(f"[entrypoint] FATAL: migration step failed: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
 
@@ -108,10 +80,14 @@ def main() -> None:
 
     reload = os.environ.get("UVICORN_RELOAD", "").lower() in ("1", "true", "yes")
     # Long-lived /events/stream connections would otherwise block shutdown/reload.
-    run_kwargs: dict = {"host": host, "port": port, "timeout_graceful_shutdown": 5}
+    run_kwargs: dict = {
+        "host": settings.api_host,
+        "port": settings.api_port,
+        "timeout_graceful_shutdown": 5,
+    }
     if reload:
         run_kwargs["reload"] = True
-        run_kwargs["reload_dirs"] = ["/app/apps", "/app/packages"]
+        run_kwargs["reload_dirs"] = [str(_REPO_ROOT / "apps"), str(_REPO_ROOT / "packages")]
 
     uvicorn.run("api.app.main:app", **run_kwargs)
 

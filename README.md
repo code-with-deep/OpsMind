@@ -12,7 +12,7 @@ OpsMind investigates complex operational anomalies, gathers evidence from busine
 
 All implementation phases **P0 through P8** are 100% complete, verified, and benchmarked:
 
-- **P0 Foundation**: FastAPI application, Docker Compose stack, PostgreSQL 16 with `pgvector`, and Alembic database migrations.
+- **P0 Foundation**: FastAPI application, PostgreSQL (Supabase) with `pgvector`, and Alembic database migrations.
 - **P1 Business Data**: Realistic ecommerce/warehouse schema (orders, shipments, inventory, returns), deterministic seed data, planted failure scenarios, and a restricted read-only SQL role.
 - **P2 Tools & Evidence**: Allowlisted parameterized SQL query templates, ISO/alias date normalizer, playbook vector RAG with heading-aware chunking, and immutable `SourceIdRegistry`.
 - **P3 Multi-Agent LangGraph**: 6 specialized agents (*Planner*, *Data Investigator*, *Knowledge Agent*, *Synthesizer*, *Critic*, *Recommender*) orchestrated as a stateful LangGraph workflow with PostgreSQL checkpointer.
@@ -72,118 +72,87 @@ All implementation phases **P0 through P8** are 100% complete, verified, and ben
 
 ## Quick Start
 
+OpsMind runs as two ordinary processes — the FastAPI backend and the Vite web app —
+against a [Supabase](https://supabase.com/) Postgres database. No Docker required.
+
 ### Prerequisites
 
-- [Docker Desktop](https://www.docker.com/) (or Docker Engine + Compose v2+)
-- [Node.js 20+](https://nodejs.org/) & `npm`
-- [Python 3.11+](https://www.python.org/)
-- *(Optional)* Groq API key in `.env` as `LLM_API_KEY` (system features built-in deterministic fallback heuristics for all agents when no LLM key is provided).
+- [Python 3.11+](https://www.python.org/) and [Node.js 20+](https://nodejs.org/)
+- A Supabase project (the free tier works)
+- *(Optional)* Groq API key in `.env` as `LLM_API_KEY` — without it every agent uses its deterministic fallback.
 
 ---
 
 ### 1. Configure Environment
 
-```powershell
-# In project root
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
 
-# Optional: Add your Groq API key for LLM-backed Planner/Synthesizer/Recommender
-# Set OPSMIND_API_KEY (default: change-me-opsmind-dev-key)
+1. Supabase dashboard → **Connect → Session pooler** → copy the URI (port `5432`).
+   Don't use the Transaction pooler (`6543`): live updates need LISTEN/NOTIFY.
+2. In `.env` set `SUPABASE_DB_URL=<that URI>`, plus `OPSMIND_API_KEY` and `JWT_SECRET`
+   (generate each with `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+3. Fill in the database settings (never prints your password):
+
+```bash
+.venv/bin/python scripts/configure_supabase_env.py
 ```
 
 ---
 
-### 2. Start the Stack with Docker Compose
+### 2. Create Tables and Demo Data
 
-**Production-style (static build — rebuild required after code changes):**
-
-```powershell
-docker compose up --build -d
+```bash
+.venv/bin/alembic upgrade head
+.venv/bin/python -m opsmind.db.seed              # demo tenant with planted incidents
+.venv/bin/python -m opsmind.db.ingest_playbooks  # SOP playbooks for RAG
 ```
 
-**Development with hot reload (recommended while coding):**
+Migrations also run automatically whenever the backend starts. Migration `0018` removes
+Supabase's public Data API (`anon` / `authenticated`) access to OpsMind tables.
 
-```powershell
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+---
+
+### 3. Start the Backend
+
+```bash
+UVICORN_RELOAD=1 .venv/bin/python -m api.entrypoint
 ```
 
-- **Web:** Vite HMR on [http://localhost:3000](http://localhost:3000) — save React/CSS files and the browser updates instantly.
-- **API:** Uvicorn `--reload` — save Python files under `apps/` or `packages/` and the API restarts automatically.
-- **DB:** unchanged (data persists in the `opsmind_pgdata` volume).
+- API: [http://localhost:8000](http://localhost:8000) · Swagger: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Check: `curl http://localhost:8000/ready` → `{"status":"ready",...}`
 
-**Linux note:** if only the legacy `docker-compose` (v1) binary is installed, use it in place of
-`docker compose` in every command. Migrations run automatically when the API container starts.
-The console receives live updates over `GET /events/stream` (Server-Sent Events), so pages
-update without refreshing — keep any reverse proxy in front of the API unbuffered for `/events`.
+### 4. Start the Web App (second terminal)
 
-When running the API or `pytest` outside Docker, point the host `DATABASE_URL*` values in `.env`
-at the host port Postgres is published on (`POSTGRES_PORT`), and run tests with
-`python -m pytest` against a separate test database.
-
-**Fastest option on Windows (frontend outside Docker):**
-
-```powershell
-docker compose up db api -d
+```bash
 cd apps/web
 npm install
 npm run dev
 ```
 
-Only Postgres + API run in Docker; Vite runs natively on your machine (best file-watching performance).
+Open **[http://localhost:3000](http://localhost:3000)**. Vite proxies every API path — including
+the live-update stream `/events/stream` — to `localhost:8000`, so pages update without refreshing.
 
 ---
 
-### 3. Apply Migrations, Seed Incident Data, and Ingest Playbooks
+### 5. Tests and End-to-End Check
 
-```powershell
-# Run database migrations
-docker compose exec api alembic upgrade head
+- **Automated tests** write data, so run them against a **disposable** Postgres with `pgvector`
+  (for example a local `opsmind_test` database) — never against your Supabase project:
 
-# Seed planted operational incidents (Earbuds stockout, FastShip SLA delays, Thermostat returns)
-docker compose exec api python -m opsmind.db.seed
+  ```bash
+  export DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/opsmind_test
+  export DATABASE_URL_SYNC=postgresql://USER:PASS@localhost:5432/opsmind_test
+  export DATABASE_URL_READONLY=postgresql+asyncpg://USER:PASS@localhost:5432/opsmind_test
+  DATABASE_URL_SYNC=$DATABASE_URL_SYNC .venv/bin/alembic upgrade head
+  .venv/bin/python -m pytest
+  ```
 
-# Ingest and vector-embed SOP markdown playbooks
-docker compose exec api python -m opsmind.db.ingest_playbooks
-```
-
----
-
-### 4. Verify API & Service Health
-
-```powershell
-# Health check
-curl http://localhost:8000/health
-
-# Readiness check (DB & Vector store)
-curl http://localhost:8000/ready
-
-# List allowlisted SQL templates (Requires API key header)
-curl -H "X-API-Key: change-me-opsmind-dev-key" http://localhost:8000/tools/sql/templates
-```
-
----
-
-### 5. Launch the Operator Web Console (Frontend)
-
-If you used **`docker-compose.dev.yml`**, the web dev server is already running at [http://localhost:3000](http://localhost:3000) with hot reload.
-
-Otherwise, run the Vite dev server locally:
-
-```powershell
-cd apps/web
-npm install
-npm run dev
-```
-
-Open **[http://localhost:3000](http://localhost:3000)** in your browser to:
-- Browse the interactive **Product Overview & Story Landing Page**.
-- Launch live multi-agent investigations on the **Operator Console**.
-- Visualize real-time LangGraph DAG execution flow and Critic retry loops.
-- Explore cited evidence with SQL sample tables and SOP playbook excerpts in the **Evidence Explorer**.
-- Submit human-in-the-loop approvals to store episodic vector embeddings in **Case Memory**.
-- Test and inspect allowlisted queries in the **SQL Tools Lab**.
-
-*Interactive API Swagger Documentation:* **[http://localhost:8000/docs](http://localhost:8000/docs)**
+- **End-to-end smoke test** against the running backend (creates a throwaway test company):
+  `.venv/bin/python scripts/predeploy_e2e_smoke.py` → ends with `E2E_PASS`.
 
 ---
 
@@ -219,11 +188,9 @@ Follow the complete step-by-step incident walkthroughs in **`docs/DEMO_SCRIPT.md
 
 ---
 
-### 8. Stop the Stack
+### 8. Stop
 
-```powershell
-docker compose down
-```
+Press `Ctrl+C` in the backend and web app terminals.
 
 ---
 
@@ -256,7 +223,7 @@ OpsMind/
 │   └── playbooks/               # Operations SOP Markdown playbooks for RAG ingestion
 ├── evals/                       # Automated evaluation harness (cases.jsonl, scorers, CLI runner)
 ├── docs/                        # Architecture specs, baseline scorecards, demo script
-└── docker-compose.yml           # Multi-container orchestration (api, db, web)
+└── scripts/                     # Supabase env setup, sample bundles, e2e smoke test
 ```
 
 ---
@@ -275,6 +242,9 @@ OpsMind/
 | `0008` | Invite codes |
 | `0009` | CSV ingest jobs (`ingest_jobs`) |
 | `0016` | `opsmind_app` role so row-level security is actually enforced for tenant sessions; `pg_notify` triggers powering live console updates |
+| `0017` | One-off resync of serial id sequences past existing rows |
+| `0018` | Supabase: revoke public Data API (`anon`/`authenticated`) access to OpsMind tables |
+| `0019` | Postgres 16+: grant the `SET` option on `opsmind_app` so tenant sessions can switch role (needed on Supabase) |
 
 Multi-tenant onboarding (MT2–MT5): signup → invite → CSV upload → playbooks → investigate.
 See `docs/MULTI_TENANT.md` and `AGENTS.md`. Demo seed data belongs to the `demo` tenant only.

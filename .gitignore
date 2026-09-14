@@ -33,7 +33,7 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
-# Docker / local data
+# Local data
 postgres_data/
 *.log
 

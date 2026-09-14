@@ -16,8 +16,10 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             settings.database_url,
             pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=10,
+            # Only serves the /ready check — keep it small; hosted Postgres
+            # (Supabase session pooler) caps client connections per project.
+            pool_size=2,
+            max_overflow=3,
         )
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine

@@ -28,7 +28,7 @@ Self-correcting **multi-agent operations intelligence** for ecommerce / warehous
 | Phase | Status |
 |-------|--------|
 | P0–P8 (foundation → demo) | **Done** |
-| Operator UI polish / routing / responsive | Done (on branch; use dev compose for hot reload) |
+| Operator UI polish / routing / responsive | Done (on branch; hot reload via `UVICORN_RELOAD=1` backend + Vite dev server) |
 | Multi-tenant | **MT0–MT6 complete (MVP + warehouse connector)** |
 
 ### Active git convention
@@ -71,11 +71,11 @@ Agents: when you complete a phase, set its status to `done`, fill **Completed**,
 2. `git branch --show-current` — expect `feature/multi-tenant` once created.
 3. `git status` / skim recent commits on the branch.
 4. Implement **only the Next phase** unless the user explicitly expands scope.
-5. After finishing: follow **§2b mandatory close-out** (update this file + rebuild Docker). Do not leave those steps for the user.
+5. After finishing: follow **§2b mandatory close-out** (update this file + restart the backend/web dev servers). Do not leave those steps for the user.
 
 ### 2b. Mandatory close-out after code / phase work (AGENT DOES THIS)
 
-**Do not ask the user to update docs or rebuild Docker from the terminal.** After any meaningful implementation (a finished phase, or a stop mid-phase with working changes), the agent **must** run this close-out itself:
+**Do not ask the user to update docs or restart servers from the terminal.** After any meaningful implementation (a finished phase, or a stop mid-phase with working changes), the agent **must** run this close-out itself:
 
 1. **Update this file (`AGENTS.md`)**
    - Set the finished phase status to `done` (or leave current as `in_progress` / note under **Stopped mid-phase**).
@@ -84,28 +84,16 @@ Agents: when you complete a phase, set its status to `done`, fill **Completed**,
    - Append a short **Completed summary** line (what shipped).
    - If blocked mid-phase: list exact remaining tasks and files under **Stopped mid-phase**.
 2. **Verify the build** when web or API code changed
-   - Web: `cd apps/web; npm run build` (fix TypeScript errors before Docker).
-   - Tests when relevant: `pytest packages/opsmind/tests apps/api/tests -q`.
-3. **Rebuild and restart Docker** so the running app picks up changes
-   - Prefer **dev hot-reload stack** for local work:
-     ```powershell
-     docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
-     ```
-   - If the user is on **production-style** compose (no dev overlay), use:
-     ```powershell
-     docker compose up --build -d
-     ```
-   - If only API Python packages changed and containers are already on the dev overlay with bind mounts + reload, still **`--build`** when `Dockerfile`, dependencies, or env templates changed.
-4. **Confirm stack health** (agent runs these, not the user)
-   ```powershell
-   docker compose ps
-   ```
-   - Smoke: API `http://localhost:8000/health` (or `/ready`) and web `http://localhost:3000` when those ports are in use.
-5. **Tell the user** briefly: what was implemented, that `AGENTS.md` was updated, and that Docker was rebuilt — with any URL/port notes.
+   - Web: `cd apps/web && npm run build` (fix TypeScript errors first).
+   - Tests when relevant, against a **disposable** Postgres (never the Supabase project): `python -m pytest packages/opsmind/tests apps/api/tests -q`.
+3. **Restart the running app** so it picks up changes (no Docker — see README → Quick Start)
+   - Backend: `UVICORN_RELOAD=1 .venv/bin/python -m api.entrypoint` — applies migrations and reloads on Python changes; restart it after dependency or `.env` changes.
+   - Web: `cd apps/web && npm run dev` (hot reload).
+4. **Confirm health** (agent runs these, not the user)
+   - `curl http://localhost:8000/ready` and open `http://localhost:3000`.
+5. **Tell the user** briefly: what was implemented, that `AGENTS.md` was updated, and that the servers were restarted — with any URL/port notes.
 
-**Skip Docker rebuild only if** the change was docs-only (e.g. only `AGENTS.md` / canvas text) with no runtime code. Still update §2 if progress changed.
-
-**Never** leave the user with “please run docker compose yourself” after an implementation session unless Docker is unavailable in the environment — then state that explicitly and give the exact command as a fallback.
+**Skip the restart only if** the change was docs-only (e.g. only `AGENTS.md` / canvas text) with no runtime code. Still update §2 if progress changed.
 
 ---
 
@@ -127,7 +115,7 @@ Agents: when you complete a phase, set its status to `done`, fill **Completed**,
 | Embeddings | OpenAI `text-embedding-3-small` (local hashing = tests/CI only) |
 | Chunking | Heading-aware, **512–768 tokens**, ~10–15% overlap |
 | Billing | Out of scope; **soft usage caps required** |
-| Host | Docker Compose |
+| Host | Native processes (FastAPI backend + Vite web app); database on Supabase (Postgres + pgvector) |
 | Branch | `feature/multi-tenant` |
 
 ### Invite / role rules
@@ -177,8 +165,7 @@ OpsMind/
 ├── data/playbooks/          # Demo SOPs (global today → per-tenant in MT3)
 ├── docs/
 ├── evals/
-├── docker-compose.yml
-├── docker-compose.dev.yml
+├── scripts/                 # configure_supabase_env.py, sample bundles, e2e smoke test
 └── pyproject.toml
 ```
 
@@ -348,17 +335,17 @@ cd apps/web; npm run build
 # 2) Python tests (when backend / agents / db changed)
 pytest packages/opsmind/tests apps/api/tests -q
 
-# 3) Rebuild + restart — DEV (preferred for day-to-day)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+# 3) Restart — backend (applies migrations, auto-reloads)
+UVICORN_RELOAD=1 .venv/bin/python -m api.entrypoint
 
-# 3b) Rebuild + restart — production-style static web image
-docker compose up --build -d
+# 3b) Restart — web dev server
+cd apps/web; npm run dev
 
-# 4) Confirm containers
-docker compose ps
+# 4) Confirm health
+curl http://localhost:8000/ready
 ```
 
-If compose project is already running, `up --build -d` is enough (no need for `down` unless volumes/migrations require a clean reset — avoid destructive volume wipes unless the user asks).
+Never run tests against the Supabase project database — use a disposable Postgres with pgvector.
 
 ---
 
@@ -382,9 +369,9 @@ If compose project is already running, `up --build -d` is enough (no need for `d
 - Tenant isolation not weakened.
 - Tests or manual smoke for the phase exit criteria.
 - **§2 Progress updated by the agent.**
-- **Docker rebuilt/restarted by the agent** (§2b) when runtime code changed.
+- **Backend and web dev servers restarted by the agent** (§2b) when runtime code changed.
 - No unrelated refactors; no committed secrets.
-- User is informed that progress file + Docker were handled — they should not need to run terminal rebuild steps.
+- User is informed that progress file + server restart were handled — they should not need to run terminal restart steps.
 
 ---
 

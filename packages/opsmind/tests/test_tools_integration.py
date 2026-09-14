@@ -1,4 +1,4 @@
-"""Integration tests against local Docker Postgres (skip if unavailable)."""
+"""Integration tests against a local test Postgres with pgvector (skip if unavailable)."""
 
 from __future__ import annotations
 

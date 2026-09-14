@@ -44,7 +44,7 @@ _limiter = _SlidingWindowLimiter()
 
 
 def _client_ip(request: Request) -> str:
-    # Trust X-Forwarded-For only if you control the proxy layer (nginx sets it here).
+    # Trust X-Forwarded-For only if you control the proxy layer (e.g. a reverse proxy you run in front of the API).
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[0].strip()

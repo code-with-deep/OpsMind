@@ -5,8 +5,7 @@ import path from "path";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  // Docker Compose sets VITE_API_PROXY_TARGET=http://api:8000 on the process env.
-  // loadEnv() only reads .env files, so prefer process.env for container networking.
+  // VITE_API_PROXY_TARGET may come from the shell or apps/web/.env; defaults to the local API.
   const apiProxyTarget =
     process.env.VITE_API_PROXY_TARGET ||
     env.VITE_API_PROXY_TARGET ||
@@ -22,8 +21,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: "0.0.0.0",
+      // File-system events work natively; polling is opt-in for network/VM mounts.
       watch: {
-        usePolling: true,
+        usePolling: process.env.VITE_USE_POLLING === "1",
       },
       proxy: {
         "/auth": {

@@ -13,7 +13,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -78,6 +78,18 @@ def _validate_params(template: SqlTemplate, params: dict[str, Any]) -> dict[str,
     return {k: params[k] for k in template.required_params}
 
 
+def _set_statement_timeout(dbapi_connection: Any, _connection_record: Any) -> None:
+    """Bound every read-only query to 15s on each new connection.
+
+    Set with a statement rather than the libpq ``options`` startup parameter,
+    which connection poolers such as Supabase's Supavisor silently drop.
+    Committed so a later transaction rollback can't undo it.
+    """
+    with dbapi_connection.cursor() as cursor:
+        cursor.execute("SET statement_timeout = 15000")
+    dbapi_connection.commit()
+
+
 def get_readonly_engine(database_url_readonly: str) -> Engine:
     global _READONLY_ENGINE, _READONLY_SESSION
     if _READONLY_ENGINE is None:
@@ -93,8 +105,8 @@ def get_readonly_engine(database_url_readonly: str) -> Engine:
             pool_size=int(os.getenv("DB_READONLY_POOL_SIZE", "10")),
             max_overflow=int(os.getenv("DB_READONLY_POOL_MAX_OVERFLOW", "10")),
             pool_recycle=int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800")),
-            connect_args={"options": "-c statement_timeout=15000"},
         )
+        event.listen(_READONLY_ENGINE, "connect", _set_statement_timeout)
         _READONLY_SESSION = sessionmaker(_READONLY_ENGINE, expire_on_commit=False)
     return _READONLY_ENGINE
 

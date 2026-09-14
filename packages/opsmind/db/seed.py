@@ -52,6 +52,10 @@ DEMO_TENANT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 
 
 def _require_sync_url() -> str:
+    from dotenv import load_dotenv
+
+    # Run as a CLI from the repo: pick up .env (already-set variables win).
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".env"))
     url = os.getenv("DATABASE_URL_SYNC")
     if not url:
         raise RuntimeError("DATABASE_URL_SYNC must be set via environment /.env")
@@ -86,6 +90,12 @@ def ensure_readonly_role(engine: Engine) -> None:
 
     user = os.getenv("DB_READONLY_USER")
     password = os.getenv("DB_READONLY_PASSWORD")
+    if password == "":
+        print(
+            "Notice: DB_READONLY_PASSWORD is empty — skipped read-only role setup. "
+            "Run `python scripts/configure_supabase_env.py` (or set it) and seed again."
+        )
+        return
     if not user or password is None:
         user = "opsmind_readonly"
         password = "opsmind_readonly"
@@ -472,6 +482,8 @@ def run_seed() -> None:
         # later CSV uploads (which rely on nextval) don't hit duplicate keys.
         from opsmind.db.ingest_csv import sync_id_sequences
 
+        # autoflush is off: write the rows first, or MAX(id) doesn't see them yet.
+        session.flush()
         sync_id_sequences(session)
         session.commit()
 

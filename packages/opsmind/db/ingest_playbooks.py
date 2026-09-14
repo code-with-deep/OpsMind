@@ -324,6 +324,10 @@ def delete_playbook(
 
 
 def run_ingest() -> None:
+    from dotenv import load_dotenv
+
+    # Run as a CLI from the repo: pick up .env (already-set variables win).
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env")
     url = os.getenv("DATABASE_URL_SYNC")
     if not url:
         raise RuntimeError("DATABASE_URL_SYNC must be set")

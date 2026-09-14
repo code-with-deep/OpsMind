@@ -16,9 +16,16 @@ APP_ROLE = "opsmind_app"
 # One round trip per transaction: set the tenant GUC, then SET LOCAL ROLE when
 # the session user may assume APP_ROLE. Roles that can't (opsmind_readonly) are
 # already subject to RLS, and databases not yet at 0016 skip the switch.
+# Postgres 16+ separates membership from the SET option: a CREATEROLE owner
+# (e.g. Supabase's `postgres`) is a MEMBER with ADMIN but may not SET ROLE until
+# granted SET (migration 0019). The nested CASE keeps older servers from ever
+# evaluating the 'SET' privilege name, which they don't recognise.
 _APPLY_TENANT_SQL = (
     "SELECT set_config('app.tenant_id', %s, true), "
     f"CASE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN NULL "
+    "WHEN current_setting('server_version_num')::int >= 160000 THEN "
+    f"CASE WHEN pg_has_role(session_user, '{APP_ROLE}', 'SET') "
+    f"THEN set_config('role', '{APP_ROLE}', true) END "
     f"WHEN pg_has_role(session_user, '{APP_ROLE}', 'MEMBER') "
     f"THEN set_config('role', '{APP_ROLE}', true) END"
 )

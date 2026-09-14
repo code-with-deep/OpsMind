@@ -6,22 +6,22 @@ This comprehensive demo script demonstrates all key capabilities of **OpsMind**,
 
 ## Prerequisites & Environment Setup
 
-1. **Start the Stack** (prefer hot-reload for local work):
-   ```powershell
-   cd "d:\PROJECTS\AI Projects\OpsMind"
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+1. **Start the app** (see README → Quick Start; database on Supabase):
+   ```bash
+   UVICORN_RELOAD=1 .venv/bin/python -m api.entrypoint   # terminal 1 — backend on :8000
+   cd apps/web && npm run dev                            # terminal 2 — web on :3000
    ```
 
-2. **Run Migrations** (seed only for the **demo** tenant — real companies upload CSV):
-   ```powershell
-   docker compose exec api alembic upgrade head
-   docker compose exec api python -m opsmind.db.seed
-   docker compose exec api python -m opsmind.db.ingest_playbooks
+2. **Seed the demo tenant** (real companies upload CSV instead):
+   ```bash
+   .venv/bin/alembic upgrade head
+   .venv/bin/python -m opsmind.db.seed
+   .venv/bin/python -m opsmind.db.ingest_playbooks
    ```
 
 3. **Tenant onboarding (self-serve path)** — use this for multi-tenant demos:
    1. Open **http://localhost:3000** → **Get Started** → create a workspace (Admin).
-   2. Settings → **Upload CSV ZIP** (`data/csv_templates/sample_tenant_data.zip`)
+   2. Settings → **Upload CSV ZIP** (`data/sample_templates/opsmind_sample_data.zip`, also downloadable from Settings)
       **or** configure a verified **Warehouse connector** (MT6).
    3. Settings → **Upload SOP** (any Markdown playbook).
    4. Optional: generate an invite code and join as Investigator; create an API key.

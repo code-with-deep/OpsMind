@@ -19,7 +19,7 @@ not necessarily inside this git repo.
 |------|----------|
 | Agents | 6 — Planner, Data Investigator, Knowledge, Synthesizer, Critic, Recommender |
 | Orchestration | LangGraph with max 2 critique retries |
-| Stack | Python, FastAPI, Postgres + pgvector, Docker Compose |
+| Stack | Python, FastAPI, React + Vite, Postgres + pgvector on Supabase |
 | Data | Synthetic ecommerce/warehouse DB + playbook RAG |
 | Memory | Working checkpoints, episodic runs, org RAG, case memory on approve |
 | Grounding | Cite-or-abstain + citation verifier |
@@ -35,11 +35,11 @@ not necessarily inside this git repo.
 | `data/playbooks/` | SOP / playbook markdown sources |
 | `evals/` | Golden cases + runner (P7) |
 | `docs/` | Architecture notes, seed scenarios, demo script |
-| `docker-compose.yml` | API + Postgres (pgvector) |
+| `scripts/` | Supabase env setup, sample bundle generators, end-to-end smoke test |
 
 ## Phase status
 
-- **P0 Foundation** — Compose, health/ready, config, Alembic baseline
+- **P0 Foundation** — health/ready, config, Alembic baseline
 - **P1 Business data plane** — schema, deterministic seed, planted scenarios (`docs/SEED_SCENARIOS.md`), read-only role
 - **P2 Tools + evidence persistence** — allowlisted SQL, date normalizer, playbook RAG, memory tables (`docs/TOOLS.md`)
 - **P3 LangGraph agent skeleton** — 6 agents, checkpoints, `POST/GET /investigations` (`docs/INVESTIGATIONS.md`)

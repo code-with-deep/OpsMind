@@ -63,7 +63,7 @@ Investigation tools (P2+) must use the read-only URL, not the owner account.
 
 ## How to (re)seed
 
-```powershell
-docker compose exec api alembic upgrade head
-docker compose exec api python -m opsmind.db.seed
+```bash
+.venv/bin/alembic upgrade head
+.venv/bin/python -m opsmind.db.seed
 ```

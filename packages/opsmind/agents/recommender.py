@@ -10,7 +10,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from opsmind.agents.grounding_rules import compact_findings_for_llm, sql_revenue_values
-from opsmind.agents.llm import LLMError, chat_json, llm_configured
+from opsmind.agents.llm import LLMError, complete_json, llm_configured
 from opsmind.agents.schemas import Recommendation
 from opsmind.db.session import get_owner_session_factory
 from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
@@ -223,14 +223,9 @@ def _llm_recommendation(
         },
         default=str,
     )[:16000]
-    raw = chat_json(
-        api_key=runtime["llm_api_key"],
-        api_base=runtime["llm_api_base"],
-        model=runtime["llm_model_strong"],
-        system=system,
-        user=user,
+    return complete_json(
+        tier="strong", system=system, user=user, validate=Recommendation.model_validate
     )
-    return Recommendation.model_validate(raw)
 
 
 def recommender_node(state: InvestigationState) -> dict[str, Any]:
@@ -243,15 +238,15 @@ def recommender_node(state: InvestigationState) -> dict[str, Any]:
     valid_ids = collect_valid_source_ids(findings)
 
     llm_error: str | None = None
-    if llm_configured(runtime.get("llm_api_key")):
+    if llm_configured(runtime):
         try:
             rec = _llm_recommendation(state["question"], hypothesis, findings, runtime)
         except LLMError as exc:
             # P1-6: log + surface the degradation instead of silently swallowing it.
             llm_error = str(exc)
             logger.warning(
-                "recommender_llm_fallback investigation_id=%s model=%s error=%s",
-                inv_id, runtime.get("llm_model_strong"), exc,
+                "recommender_llm_fallback investigation_id=%s providers=%s error=%s",
+                inv_id, runtime.get("llm_providers"), exc,
             )
             rec = _heuristic_recommendation(
                 hypothesis, findings, assumptions=assumptions
@@ -260,8 +255,8 @@ def recommender_node(state: InvestigationState) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — schema validation / unexpected shape
             llm_error = str(exc)
             logger.warning(
-                "recommender_llm_fallback investigation_id=%s model=%s error=%s",
-                inv_id, runtime.get("llm_model_strong"), exc,
+                "recommender_llm_fallback investigation_id=%s providers=%s error=%s",
+                inv_id, runtime.get("llm_providers"), exc,
             )
             rec = _heuristic_recommendation(
                 hypothesis, findings, assumptions=assumptions

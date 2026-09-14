@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.orm import Session
 
+from opsmind.agents.llm import configure_providers, providers_from_settings
 from opsmind.db.memory_models import Investigation
 from opsmind.db.session import get_owner_session_factory
 from opsmind.graph.builder import build_investigation_graph
@@ -111,13 +112,15 @@ def _strip_sensitive_from_runtime(runtime: dict[str, Any]) -> dict[str, Any]:
 
 def build_runtime(settings: Any, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     max_tools = int(getattr(settings, "max_tool_calls_per_run", 40))
+    # Gemini → OpenAI → Groq (whichever have keys). Keys stay in opsmind.agents.llm;
+    # graph state only records whether LLMs are on and which providers/models.
+    providers = providers_from_settings(settings)
+    configure_providers(providers)
     runtime = {
         "database_url_sync": settings.database_url_sync,
         "database_url_readonly": settings.database_url_readonly,
-        "llm_api_key": settings.llm_api_key,
-        "llm_api_base": settings.llm_api_base,
-        "llm_model_fast": settings.llm_model_fast,
-        "llm_model_strong": settings.llm_model_strong,
+        "llm_enabled": bool(providers),
+        "llm_providers": [provider.describe() for provider in providers],
         "max_critic_retries": int(getattr(settings, "max_critic_retries", 2)),
         "max_tool_calls_per_run": max_tools,
         "tenant_id": None,

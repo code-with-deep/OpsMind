@@ -61,10 +61,10 @@ All implementation phases **P0 through P8** are 100% complete, verified, and ben
 
 | Agent | Responsibility | Backing Technology |
 | :--- | :--- | :--- |
-| **Planner & Triage** | Validates question domain, normalizes date expressions to ISO, and retrieves relevant case memory. | Groq LLM / Heuristic Regex Fallback |
+| **Planner & Triage** | Validates question domain, normalizes date expressions to ISO, and retrieves relevant case memory. | LLM chain (Gemini → OpenAI → Groq) / Heuristic Regex Fallback |
 | **Data Investigator** | Executes parameterized read-only SQL templates against orders, shipments, returns, and inventory. | Restricted PostgreSQL Role |
 | **Knowledge Agent** | Searches chunked SOP playbooks for carrier routing, stockout escalation, and return procedures. | `pgvector` Cosine Similarity |
-| **Synthesizer** | Merges SQL data and playbook excerpts into a multi-driver operational hypothesis with confidence rating. | Groq LLM / Deterministic Synthesizer |
+| **Synthesizer** | Merges SQL data and playbook excerpts into a multi-driver operational hypothesis with confidence rating. | LLM chain (Gemini → OpenAI → Groq) / Deterministic Synthesizer |
 | **Critic** | Evaluates hypothesis completeness and evidence breadth; commands gap-aware replanning if evidence is missing. | Rule-based & LLM Verification Loop |
 | **Recommender** | Formulates prioritized operational actions with verified citations mapped to each claim. | Citation Verifier Matrix |
 
@@ -79,7 +79,7 @@ against a [Supabase](https://supabase.com/) Postgres database. No Docker require
 
 - [Python 3.11+](https://www.python.org/) and [Node.js 20+](https://nodejs.org/)
 - A Supabase project (the free tier works)
-- *(Optional)* Groq API key in `.env` as `LLM_API_KEY` — without it every agent uses its deterministic fallback.
+- *(Optional)* LLM keys in `.env`: `GEMINI_API_KEY` (main), then `OPENAI_API_KEY` and `LLM_API_KEY` (Groq) as fallbacks — with none set, every agent uses its deterministic fallback.
 
 ---
 

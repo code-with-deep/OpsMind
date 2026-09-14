@@ -23,10 +23,21 @@ class Settings(BaseSettings):
     database_url_sync: str
     database_url_readonly: str
 
-    llm_api_key: str
-    llm_api_base: str
-    llm_model_fast: str
-    llm_model_strong: str
+    # LLM providers, tried in LLM_PROVIDER_ORDER; each takes part only when its key
+    # is set (see opsmind.agents.llm). OpenAI reuses openai_api_key/openai_api_base
+    # below; LLM_API_KEY / LLM_API_BASE / LLM_MODEL_* configure Groq.
+    llm_provider_order: str = "gemini,openai,groq"
+    gemini_api_key: str = ""
+    gemini_api_base: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    gemini_model_fast: str = "gemini-2.5-flash"
+    gemini_model_strong: str = "gemini-2.5-pro"
+    openai_model_fast: str = "gpt-4.1-mini"
+    openai_model_strong: str = "gpt-4.1"
+    groq_api_key: str = ""
+    llm_api_key: str = ""
+    llm_api_base: str = "https://api.groq.com/openai/v1"
+    llm_model_fast: str = "openai/gpt-oss-20b"
+    llm_model_strong: str = "openai/gpt-oss-120b"
 
     max_critic_retries: int
     max_tool_calls_per_run: int

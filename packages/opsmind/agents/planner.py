@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 
-from opsmind.agents.llm import LLMError, chat_json, llm_configured
+from opsmind.agents.llm import LLMError, complete_json, llm_configured
 from opsmind.agents.schemas import InvestigationPlan, RagStep, SqlStep
 from opsmind.agents.triage import SUPPORTED_DOMAINS, classify_question
 from opsmind.db.models import DailyMetric
@@ -329,14 +329,9 @@ def _llm_plan(
         f"Use start_date/end_date params problem={p} prior={prior_p}.\n"
         "Produce an investigation plan."
     )
-    raw = chat_json(
-        api_key=runtime["llm_api_key"],
-        api_base=runtime["llm_api_base"],
-        model=runtime["llm_model_fast"],
-        system=system,
-        user=user,
+    plan = complete_json(
+        tier="fast", system=system, user=user, validate=InvestigationPlan.model_validate
     )
-    plan = InvestigationPlan.model_validate(raw)
     return _sanitize_llm_plan(plan, question, data_end=data_end)
 
 
@@ -428,22 +423,22 @@ def planner_node(state: InvestigationState) -> dict[str, Any]:
         else _latest_data_date(runtime, tenant_id)
     )
     err: str | None = None
-    if llm_configured(runtime.get("llm_api_key")):
+    if llm_configured(runtime):
         try:
             plan = _llm_plan(question, runtime, gaps=gaps if is_retry else None, data_end=data_end)
         except LLMError as exc:
             err = str(exc)
             logger.warning(
-                "planner_llm_fallback investigation_id=%s model=%s error=%s",
-                inv_id, runtime.get("llm_model_fast"), exc,
+                "planner_llm_fallback investigation_id=%s providers=%s error=%s",
+                inv_id, runtime.get("llm_providers"), exc,
             )
             plan = _heuristic_plan(question, gaps=gaps if is_retry else None, data_end=data_end)
             plan = plan.model_copy(update={"degraded": True})
         except Exception as exc:  # noqa: BLE001 — schema validation / unexpected shape
             err = str(exc)
             logger.warning(
-                "planner_llm_fallback investigation_id=%s model=%s error=%s",
-                inv_id, runtime.get("llm_model_fast"), exc,
+                "planner_llm_fallback investigation_id=%s providers=%s error=%s",
+                inv_id, runtime.get("llm_providers"), exc,
             )
             plan = _heuristic_plan(question, gaps=gaps if is_retry else None, data_end=data_end)
             plan = plan.model_copy(update={"degraded": True})

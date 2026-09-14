@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 from opsmind.agents.grounding_rules import compact_findings_for_llm, sql_revenue_values
-from opsmind.agents.llm import LLMError, chat_json, llm_configured
+from opsmind.agents.llm import LLMError, complete_json, llm_configured
 from opsmind.agents.schemas import Hypothesis
 from opsmind.db.session import get_owner_session_factory
 from opsmind.db.tenant_session import apply_tenant_session, tenant_id_from_runtime
@@ -224,14 +224,9 @@ def _llm_hypothesis(
     user = (
         f"Question: {question}\n\nFindings JSON:\n{json.dumps(compact, default=str)[:14000]}"
     )
-    raw = chat_json(
-        api_key=runtime["llm_api_key"],
-        api_base=runtime["llm_api_base"],
-        model=runtime["llm_model_strong"],
-        system=system,
-        user=user,
+    return complete_json(
+        tier="strong", system=system, user=user, validate=Hypothesis.model_validate
     )
-    return Hypothesis.model_validate(raw)
 
 
 def synthesizer_node(state: InvestigationState) -> dict[str, Any]:
@@ -241,23 +236,23 @@ def synthesizer_node(state: InvestigationState) -> dict[str, Any]:
     tenant_id = tenant_id_from_runtime(runtime)
 
     llm_error: str | None = None
-    if llm_configured(runtime.get("llm_api_key")):
+    if llm_configured(runtime):
         try:
             hypothesis = _llm_hypothesis(state["question"], findings, runtime)
         except LLMError as exc:
             # P1-6: log + surface, never silently swallow.
             llm_error = str(exc)
             logger.warning(
-                "synthesizer_llm_fallback investigation_id=%s model=%s error=%s",
-                inv_id, runtime.get("llm_model_strong"), exc,
+                "synthesizer_llm_fallback investigation_id=%s providers=%s error=%s",
+                inv_id, runtime.get("llm_providers"), exc,
             )
             hypothesis = _heuristic_hypothesis(findings)
             hypothesis = hypothesis.model_copy(update={"degraded": True})
         except Exception as exc:  # noqa: BLE001 — schema validation / unexpected shape
             llm_error = str(exc)
             logger.warning(
-                "synthesizer_llm_fallback investigation_id=%s model=%s error=%s",
-                inv_id, runtime.get("llm_model_strong"), exc,
+                "synthesizer_llm_fallback investigation_id=%s providers=%s error=%s",
+                inv_id, runtime.get("llm_providers"), exc,
             )
             hypothesis = _heuristic_hypothesis(findings)
             hypothesis = hypothesis.model_copy(update={"degraded": True})

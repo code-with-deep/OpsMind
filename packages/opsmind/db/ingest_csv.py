@@ -377,8 +377,11 @@ def ingest_csv_tables(
         campaigns += 1
     counts["campaigns"] = campaigns
 
-    # orders — external order_id → db id
-    external_to_order_id: dict[str, int] = {}
+    # orders — external order_id → db id. Rows are flushed once after the loop, not
+    # per row: each flush is a database round trip, which on a remote database made
+    # uploads take minutes. One flush sends batched INSERT ... RETURNING and still
+    # fills in every id.
+    orders_by_ext: dict[str, Order] = {}
     for row in parsed["orders.csv"]:
         _require_cols(
             row,
@@ -394,7 +397,7 @@ def ingest_csv_tables(
             "orders.csv",
         )
         ext = row["order_id"]
-        if ext in external_to_order_id:
+        if ext in orders_by_ext:
             raise CsvIngestError(f"Duplicate order_id in orders.csv: {ext}")
         order = Order(
             tenant_id=tenant_id,
@@ -406,12 +409,13 @@ def ingest_csv_tables(
             net_amount=_parse_decimal(row["net_amount"], "net_amount"),
         )
         session.add(order)
-        session.flush()
-        external_to_order_id[ext] = order.id
+        orders_by_ext[ext] = order
+    session.flush()
+    external_to_order_id = {ext: order.id for ext, order in orders_by_ext.items()}
     counts["orders"] = len(external_to_order_id)
 
-    # order_items
-    item_key_to_id: dict[tuple[str, str], int] = {}
+    # order_items — flushed once after the loop, like orders
+    items_by_key: dict[tuple[str, str], OrderItem] = {}
     items_n = 0
     for row in parsed["order_items.csv"]:
         _require_cols(
@@ -434,9 +438,10 @@ def ingest_csv_tables(
             line_total=_parse_decimal(row["line_total"], "line_total"),
         )
         session.add(item)
-        session.flush()
-        item_key_to_id[(ext, sku)] = item.id
+        items_by_key[(ext, sku)] = item
         items_n += 1
+    session.flush()
+    item_key_to_id = {key: item.id for key, item in items_by_key.items()}
     counts["order_items"] = items_n
 
     # inventory (optional)

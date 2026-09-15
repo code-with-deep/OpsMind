@@ -20,10 +20,11 @@ export function ForgotPasswordPage() {
     e.preventDefault();
     setError(null);
     setMessage(null);
-    if (!form.validateForSubmit()) return;
+    const values = form.validateForSubmit();
+    if (!values) return;
     setLoading(true);
     try {
-      const res = await api.forgotPassword({ email: form.values.email.trim() });
+      const res = await api.forgotPassword({ email: values.email.trim() });
       setMessage(
         `${res.message || "If an account exists for that email, we sent a password reset link."} ` +
           "Check your inbox and spam folder — the link expires soon."

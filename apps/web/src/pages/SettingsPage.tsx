@@ -270,12 +270,13 @@ export function SettingsPage() {
   };
 
   const savePassword = async () => {
-    if (!passwordForm.validateForSubmit()) return;
+    const values = passwordForm.validateForSubmit();
+    if (!values) return;
     setSavingPassword(true);
     try {
       const res = await api.changePassword({
-        current_password: passwordForm.values.current_password,
-        new_password: passwordForm.values.new_password,
+        current_password: values.current_password,
+        new_password: values.new_password,
       });
       setUser(res.user);
       setStoredUser(res.user);

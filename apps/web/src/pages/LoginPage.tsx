@@ -46,10 +46,11 @@ export function LoginPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!form.validateForSubmit()) return;
+    const values = form.validateForSubmit();
+    if (!values) return;
     setLoading(true);
     try {
-      await api.login({ email: form.values.email.trim(), password: form.values.password });
+      await api.login({ email: values.email.trim(), password: values.password });
       const next = navState?.from || routes.console;
       navigate(next, {
         replace: true,

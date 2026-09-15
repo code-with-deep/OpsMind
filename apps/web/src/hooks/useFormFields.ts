@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FocusEvent } from "react";
 
 export type FieldErrors<K extends string> = Partial<Record<K, string>>;
 
@@ -40,19 +40,37 @@ export function useFormFields<K extends string>(
     name: key,
     value: values[key],
     onChange: (value: string) => setValue(key, value),
-    onBlur: () => setTouched((prev) => ({ ...prev, [key]: true })),
+    onBlur: (e: FocusEvent<HTMLInputElement>) => {
+      // Autofill may have filled the input without an onChange; pick its value
+      // up before the field is marked touched so no false "required" flashes.
+      const domValue = e.currentTarget.value;
+      if (domValue !== values[key]) setValue(key, domValue);
+      setTouched((prev) => ({ ...prev, [key]: true }));
+    },
     error: errorFor(key),
   });
 
-  /** Marks the form as submitted; returns false and focuses the first invalid field when invalid. */
-  const validateForSubmit = (): boolean => {
+  /**
+   * Marks the form as submitted and validates what the inputs actually hold.
+   * Browser autofill can fill inputs without firing onChange (Chrome withholds the
+   * value until the user interacts with the page), so state may still be empty.
+   * Returns the values to submit, or null (focusing the first invalid field).
+   */
+  const validateForSubmit = (): Record<K, string> | null => {
+    const current = { ...values };
+    for (const key of keys) {
+      const input = document.getElementById(`field-${key}`);
+      if (input instanceof HTMLInputElement) current[key] = input.value;
+    }
+    setValues(current);
     setSubmitted(true);
-    const firstInvalid = keys.find((key) => clientErrors[key]);
+    const errors = validate(current);
+    const firstInvalid = keys.find((key) => errors[key]);
     if (firstInvalid) {
       focusField(firstInvalid);
-      return false;
+      return null;
     }
-    return true;
+    return current;
   };
 
   /** Shows server validation messages next to their fields; returns true if any matched. */

@@ -94,9 +94,10 @@ export function JoinPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!form.validateForSubmit()) return;
+    const values = form.validateForSubmit();
+    if (!values) return;
     setLoading(true);
-    const { invite_code, email, password } = form.values;
+    const { invite_code, email, password } = values;
     try {
       const res = await api.joinInvite({ invite_code: invite_code.trim(), email: email.trim(), password });
       setState({

@@ -23,10 +23,11 @@ export function ResetPasswordPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!form.validateForSubmit()) return;
+    const values = form.validateForSubmit();
+    if (!values) return;
     setLoading(true);
     try {
-      await api.resetPassword({ token, new_password: form.values.new_password });
+      await api.resetPassword({ token, new_password: values.new_password });
       navigate(routes.login, {
         replace: true,
         state: { notice: "Password updated. Sign in with your new password." },

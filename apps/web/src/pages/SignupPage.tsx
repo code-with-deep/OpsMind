@@ -46,13 +46,14 @@ export function SignupPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!form.validateForSubmit()) return;
+    const values = form.validateForSubmit();
+    if (!values) return;
     setLoading(true);
     try {
       await api.signup({
-        company_name: form.values.company_name.trim(),
-        email: form.values.email.trim(),
-        password: form.values.password,
+        company_name: values.company_name.trim(),
+        email: values.email.trim(),
+        password: values.password,
       });
       const next = navState?.from || routes.console;
       navigate(next, {

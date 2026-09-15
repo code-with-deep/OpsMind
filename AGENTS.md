@@ -55,10 +55,11 @@ Agents: when you complete a phase, set its status to `done`, fill **Completed**,
 | — | — | Multi-tenant roadmap complete through MT5 (MT6 removed) |
 | Invitation Access Request System + Notification Bells | `done` | Full invite-based access request workflow + in-app notifications (2026-09-08) |
 
-**Last updated:** 2026-09-08 
+**Last updated:** 2026-09-14 
 **Next phase to implement:** _(none — MT0–MT5 complete + access request system + case memory wired)_ 
 **Stopped mid-phase:** _(none)_
 
+**Completed summary (Supabase Session Pooler env fix, 2026-09-14):** Normalized `.env` to the Supabase Session Pooler (`aws-0-ap-northeast-2.pooler.supabase.com:5432`) and removed mixed localhost/direct-host duplicates. Fixed `scripts/configure_supabase_env.py` to URL-encode read-only credentials for pooler DSNs and replaced a Unicode arrow in its final print line so it no longer crashes on Windows cp1252 consoles. Regenerated `DATABASE_URL*`, verified sync + async DB connectivity, and restarted the app on the standard ports.
 **Completed summary (Tools removal + Business Data delete, 2026-09-08):** Removed "Tools" section end-to-end — deleted `/tools` route from `App.tsx` (incl. `ToolsPage` import), removed `tools` key from `routes.ts` + tab detection, removed `onExploreTools` prop from `LandingPage.tsx` interface/destructuring/footer link and `LandingPageRoute.tsx`. Added `DELETE /data/csv` backend endpoint in `routes/data.py` (admin-only, deletes all business tables rows for the tenant in FK-safe order + wipes upload dir). Added `deleteBusinessData()` to `api.ts`. Added **Delete Data** button + inline confirm dialog in `SettingsPage.tsx` Business Data section (only visible to admin when data is ready). Docker rebuilt and health confirmed. 
 **Completed summary (Invitation Access Request System, 2026-09-08):** Added `access_requests` and `notifications` tables (migration `0012`); extended `users` with `status/revoked_at/revoked_by`; updated ORM models; changed `/auth/join` to create `AccessRequest` (pending) instead of User immediately; added `GET /auth/request-status` poll endpoint; new `/access/*` routes for admin approve/reject/list/revoke; new `/notifications/*` routes for bell count + list + mark-read; `NotificationBell.tsx` with polling, dropdown, mark-all-read; `Header.tsx` — bell added, API Key button removed; `SettingsPage.tsx` — Access Management section with Pending/Active/Revoked tabs; `JoinPage.tsx` — pending state + 10s polling; `RequireAuth.tsx` — 403 revoked screen; TypeScript build clean; Docker rebuilt.
 

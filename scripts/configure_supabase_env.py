@@ -18,7 +18,7 @@ import re
 import secrets
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
@@ -84,6 +84,8 @@ def main() -> int:
     generated = readonly_password in {"", LEGACY_READONLY_PASSWORD}
     if generated:
         readonly_password = secrets.token_urlsafe(24)
+    readonly_user_escaped = quote(f"{readonly_user}{ref_suffix}", safe="")
+    readonly_password_escaped = quote(readonly_password, safe="")
 
     target = f"{hostport}/{database}"
     updates = {
@@ -91,7 +93,7 @@ def main() -> int:
         "DATABASE_URL_SYNC": f"postgresql://{user}:{password}@{target}?sslmode=require",
         # The SQL tool swaps this prefix for a synchronous driver, hence sslmode.
         "DATABASE_URL_READONLY": (
-            f"postgresql+asyncpg://{readonly_user}{ref_suffix}:{readonly_password}"
+            f"postgresql+asyncpg://{readonly_user_escaped}:{readonly_password_escaped}"
             f"@{target}?sslmode=require"
         ),
         "DB_READONLY_USER": readonly_user,
@@ -121,7 +123,7 @@ def main() -> int:
         print(f"  {key}={_mask(updates[key])}")
     if generated:
         print("  DB_READONLY_PASSWORD=<generated>")
-    print("Next: alembic upgrade head, then python -m opsmind.db.seed (see README → Quick Start).")
+    print("Next: alembic upgrade head, then python -m opsmind.db.seed (see README -> Quick Start).")
     return 0
 
 

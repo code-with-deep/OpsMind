@@ -2,6 +2,37 @@ import { useState, type FocusEvent } from "react";
 
 export type FieldErrors<K extends string> = Partial<Record<K, string>>;
 
+// Whether a mouse/touch press is in progress, shared by every form. Pressing a
+// link or button blurs the focused field; if its error appeared right away the
+// layout would shift, the press would be released over a different spot and the
+// browser would drop the click — so the link only worked on the second click.
+let pointerPressed = false;
+if (typeof window !== "undefined") {
+  const release = () => {
+    pointerPressed = false;
+  };
+  window.addEventListener("pointerdown", () => { pointerPressed = true; }, true);
+  window.addEventListener("pointerup", release, true);
+  window.addEventListener("pointercancel", release, true);
+  window.addEventListener("blur", release);
+}
+
+/** Runs `fn` now, or after the click that ends a press in progress. */
+function afterPointerRelease(fn: () => void): void {
+  if (!pointerPressed) {
+    fn();
+    return;
+  }
+  const run = () => {
+    window.removeEventListener("pointerup", run, true);
+    window.removeEventListener("pointercancel", run, true);
+    // A timer runs after the click event that follows pointerup.
+    setTimeout(fn, 0);
+  };
+  window.addEventListener("pointerup", run, true);
+  window.addEventListener("pointercancel", run, true);
+}
+
 /**
  * Form state with validate-on-blur/submit plus server-side field errors.
  * A field's error appears once the user has left it or tried to submit, so
@@ -45,7 +76,7 @@ export function useFormFields<K extends string>(
       // up before the field is marked touched so no false "required" flashes.
       const domValue = e.currentTarget.value;
       if (domValue !== values[key]) setValue(key, domValue);
-      setTouched((prev) => ({ ...prev, [key]: true }));
+      afterPointerRelease(() => setTouched((prev) => ({ ...prev, [key]: true })));
     },
     error: errorFor(key),
   });

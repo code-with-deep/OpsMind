@@ -97,7 +97,6 @@ export function SignupPage() {
           label="Company name"
           autoComplete="organization"
           placeholder="Acme Retail"
-          autoFocus
           maxLength={120}
           {...form.bind("company_name")}
         />

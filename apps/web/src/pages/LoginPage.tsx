@@ -96,7 +96,6 @@ export function LoginPage() {
           inputMode="email"
           autoComplete="email"
           placeholder="name@company.com"
-          autoFocus
           {...form.bind("email")}
         />
         <TextField

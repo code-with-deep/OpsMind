@@ -59,7 +59,6 @@ export function ForgotPasswordPage() {
           inputMode="email"
           autoComplete="email"
           placeholder="name@company.com"
-          autoFocus
           {...form.bind("email")}
         />
         {error ? <FormAlert>{error}</FormAlert> : null}

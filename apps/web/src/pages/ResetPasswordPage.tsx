@@ -74,7 +74,6 @@ export function ResetPasswordPage() {
             label="New password"
             type="password"
             autoComplete="new-password"
-            autoFocus
             disabled={linkInvalid}
             {...form.bind("new_password")}
           />

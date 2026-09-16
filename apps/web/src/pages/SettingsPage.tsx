@@ -93,6 +93,9 @@ export function SettingsPage() {
   const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null);
 
   const isAdmin = user?.role === "admin";
+  const normalizedCompanyName = companyName.trim();
+  const savedCompanyName = user?.tenant.name.trim() ?? "";
+  const companyNameChanged = normalizedCompanyName !== savedCompanyName;
 
   const load = async () => {
     setLoading(true);
@@ -245,6 +248,7 @@ export function SettingsPage() {
   };
 
   const saveCompany = async () => {
+    if (!companyNameChanged) return;
     const nameError = validateCompanyName(companyName);
     if (nameError) {
       toast(nameError, "error");
@@ -252,7 +256,7 @@ export function SettingsPage() {
     }
     setSavingCompany(true);
     try {
-      const res = await api.updateTenant({ name: companyName.trim() });
+      const res = await api.updateTenant({ name: normalizedCompanyName });
       if (user) {
         const next = {
           ...user,
@@ -492,6 +496,7 @@ export function SettingsPage() {
                     variant="accent"
                     size="sm"
                     loading={savingCompany}
+                    disabled={!companyNameChanged}
                     onClick={() => void saveCompany()}
                   >
                     Save

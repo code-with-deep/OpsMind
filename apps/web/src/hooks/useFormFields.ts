@@ -43,6 +43,7 @@ export function useFormFields<K extends string>(
   validate: (values: Record<K, string>) => FieldErrors<K>
 ) {
   const [values, setValues] = useState(initial);
+  const [dirty, setDirty] = useState<Partial<Record<K, boolean>>>({});
   const [touched, setTouched] = useState<Partial<Record<K, boolean>>>({});
   const [submitted, setSubmitted] = useState(false);
   const [serverErrors, setServerErrors] = useState<FieldErrors<K>>({});
@@ -70,12 +71,19 @@ export function useFormFields<K extends string>(
     id: `field-${key}`,
     name: key,
     value: values[key],
-    onChange: (value: string) => setValue(key, value),
+    onChange: (value: string) => {
+      setDirty((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+      setValue(key, value);
+    },
     onBlur: (e: FocusEvent<HTMLInputElement>) => {
       // Autofill may have filled the input without an onChange; pick its value
       // up before the field is marked touched so no false "required" flashes.
       const domValue = e.currentTarget.value;
       if (domValue !== values[key]) setValue(key, domValue);
+      // Only show blur-time validation after meaningful interaction with the
+      // field, not just because it received focus and then lost it while empty.
+      const interacted = dirty[key] || domValue.length > 0;
+      if (!interacted) return;
       afterPointerRelease(() => setTouched((prev) => ({ ...prev, [key]: true })));
     },
     error: errorFor(key),
@@ -116,6 +124,7 @@ export function useFormFields<K extends string>(
 
   const reset = () => {
     setValues(initial);
+    setDirty({});
     setTouched({});
     setSubmitted(false);
     setServerErrors({});
